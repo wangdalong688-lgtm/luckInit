@@ -363,6 +363,66 @@
         Anshan: { center: [122.9902, 41.1076], zoom: 13, nameZh: "鞍山市" },
       };
 
+      const BRAND_SCAN_RADIUS_M = 1000;
+      const BRAND_GROUPS = [
+        {
+          key: "competitor",
+          label: "竞品",
+          brands: [
+            { name: "星巴克", query: "星巴克" },
+            { name: "Costa", query: "COSTA咖啡" },
+            { name: "Tims", query: "Tims天好咖啡" },
+            { name: "库迪", query: "库迪咖啡" },
+            { name: "幸运咖", query: "幸运咖" },
+          ],
+        },
+        {
+          key: "similar",
+          label: "类竞品",
+          brands: [
+            { name: "蜜雪冰城", query: "蜜雪冰城" },
+            { name: "霸王茶姬", query: "霸王茶姬" },
+            { name: "古茗", query: "古茗" },
+            { name: "茶百道", query: "茶百道" },
+            { name: "树夏", query: "树夏" },
+            { name: "益禾堂", query: "益禾堂" },
+            { name: "一点点", query: "一点点" },
+            { name: "七分甜", query: "七分甜" },
+            { name: "甜啦啦", query: "甜啦啦" },
+          ],
+        },
+        {
+          key: "coexist",
+          label: "共生品牌",
+          brands: [
+            { name: "麦当劳", query: "麦当劳" },
+            { name: "肯德基", query: "肯德基" },
+            { name: "吉野家", query: "吉野家" },
+            { name: "塔斯汀", query: "塔斯汀" },
+            { name: "汉堡王", query: "汉堡王" },
+            { name: "华莱士", query: "华莱士" },
+            { name: "德克士", query: "德克士" },
+            { name: "呷哺呷哺", query: "呷哺呷哺" },
+            { name: "野人先生", query: "野人先生" },
+          ],
+        },
+      ];
+
+      function brandPriorityWeight(index, total) {
+        if (total <= 1) return 10;
+        return Number((10 - (index * 6) / (total - 1)).toFixed(2));
+      }
+
+      const BRAND_DEFINITIONS = BRAND_GROUPS.flatMap((group) =>
+        group.brands.map((brand, index) => ({
+          ...brand,
+          groupKey: group.key,
+          groupLabel: group.label,
+          rank: index + 1,
+          weight: brandPriorityWeight(index, group.brands.length),
+        }))
+      );
+
       function resolveApiBase() {
         const fromQuery = (PAGE_PARAMS.get("apiBase") || "").trim();
         if (fromQuery) return fromQuery.replace(/\/+$/, "");
@@ -661,6 +721,163 @@
         return dedupePlaces(all);
       }
 
+      async function runInBatches(taskFactories, batchSize = 5) {
+        const output = [];
+        for (let i = 0; i < taskFactories.length; i += batchSize) {
+          const batch = taskFactories.slice(i, i + batchSize);
+          const settled = await Promise.all(
+            batch.map(async (factory) => {
+              try {
+                return await factory();
+              } catch (error) {
+                console.warn("batched_task_failed", error);
+                return [];
+              }
+            })
+          );
+          output.push(...settled);
+        }
+        return output;
+      }
+
+      async function amapSearchNearByKeyword(
+        city,
+        keyword,
+        category,
+        center,
+        radius = 3000
+      ) {
+        await ensureAmapPlaceSearch();
+        const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+        return await new Promise((resolve) => {
+          const service = new window.AMap.PlaceSearch({
+            city: cityName,
+            citylimit: true,
+            pageSize: 50,
+            pageIndex: 1,
+            extensions: "all",
+          });
+          service.searchNearBy(keyword, [center.lng, center.lat], radius, (status, result) => {
+            if (status !== "complete" || !result || !result.poiList) {
+              resolve([]);
+              return;
+            }
+            const items = (result.poiList.pois || [])
+              .map((poi) => {
+                const loc = getLngLatNumbers(poi.location);
+                if (!loc) return null;
+                return {
+                  id: poi.id || "",
+                  name: poi.name || keyword,
+                  address:
+                    [poi.pname, poi.cityname, poi.adname, poi.address]
+                      .filter(Boolean)
+                      .join("") || "",
+                  category,
+                  location: loc,
+                  location_gcj02: loc,
+                  tags: {
+                    source: "amap_nearby",
+                    type: poi.type || "",
+                    tel: poi.tel || "",
+                  },
+                };
+              })
+              .filter(Boolean);
+            resolve(dedupePlaces(items));
+          });
+        });
+      }
+
+      async function fetchAmapBrandSignals(city) {
+        const tasks = BRAND_DEFINITIONS.map(
+          (definition) => async () => {
+            const places = await amapSearchKeyword(
+              city,
+              definition.query,
+              definition.groupLabel,
+              2
+            );
+            return places.map((place) => ({
+              ...place,
+              brand: definition.name,
+              brand_group: definition.groupKey,
+              brand_group_label: definition.groupLabel,
+              brand_rank: definition.rank,
+              brand_weight: definition.weight,
+            }));
+          }
+        );
+        const results = await runInBatches(tasks, 5);
+        return dedupePlaces(results.flat());
+      }
+
+      function applyBrandSignalMetrics(data, brandPois) {
+        data.brand_pois = dedupePlaces(brandPois);
+        (data.hotspots || []).forEach((group) => {
+          const spotLoc = getAmapLocation(group.spot);
+          if (!spotLoc) return;
+
+          const nearby = data.brand_pois
+            .map((poi) => ({
+              poi,
+              distance: haversineDistanceM(spotLoc, getAmapLocation(poi)),
+            }))
+            .filter(
+              (item) =>
+                Number.isFinite(item.distance) &&
+                item.distance <= BRAND_SCAN_RADIUS_M
+            )
+            .sort((a, b) => a.distance - b.distance);
+
+          const groupCounts = { competitor: 0, similar: 0, coexist: 0 };
+          const brandCountMap = {};
+          nearby.forEach(({ poi }) => {
+            if (groupCounts[poi.brand_group] != null) {
+              groupCounts[poi.brand_group] += 1;
+            }
+            brandCountMap[poi.brand] = (brandCountMap[poi.brand] || 0) + 1;
+          });
+
+          const matchedBrands = BRAND_DEFINITIONS.filter(
+            (definition) => brandCountMap[definition.name]
+          ).map((definition) => ({
+            name: definition.name,
+            group: definition.groupKey,
+            group_label: definition.groupLabel,
+            rank: definition.rank,
+            weight: definition.weight,
+            count: brandCountMap[definition.name],
+          }));
+
+          const brandSignalScore = matchedBrands.reduce(
+            (sum, item) => sum + item.weight,
+            0
+          );
+          const baseScore = Number(group.spot?.hot_score || group.hot_score || 0);
+          const priorityScore = Number(
+            (baseScore + brandSignalScore * 2).toFixed(1)
+          );
+
+          group.brand_scan_radius_m = BRAND_SCAN_RADIUS_M;
+          group.brand_counts = groupCounts;
+          group.brand_matches = matchedBrands;
+          group.brand_signal_score = Number(brandSignalScore.toFixed(1));
+          group.priority_score = priorityScore;
+          group.brand_pois_nearby = nearby.map(({ poi, distance }) => ({
+            ...poi,
+            distance_m: Math.round(distance),
+          }));
+        });
+
+        data.hotspots = (data.hotspots || []).sort(
+          (a, b) =>
+            Number(b.priority_score || b.spot?.hot_score || 0) -
+            Number(a.priority_score || a.spot?.hot_score || 0)
+        );
+        return data;
+      }
+
       async function fetchAmapLuckinStores(city) {
         const results = await Promise.all([
           amapSearchKeyword(city, "瑞幸咖啡", "瑞幸", 4),
@@ -703,13 +920,16 @@
       async function buildAmapFallbackData(city) {
         setMapStatus("Overpass 不可用，正在切换高德 POI 数据分析...");
         const anchorDefs = [
-          ["购物中心", "商场"],
-          ["商场", "商场"],
-          ["商业广场", "商圈"],
-          ["写字楼", "写字楼"],
-          ["大学", "大学"],
-          ["火车站", "交通"],
-          ["大型超市", "超市"],
+          ["购物中心", "商场", 2],
+          ["商场", "商场", 2],
+          ["商业广场", "商圈", 2],
+          ["写字楼", "写字楼", 2],
+          ["大学", "大学", 2],
+          ["火车站", "交通", 2],
+          ["大型超市", "超市", 2],
+          ["镇政府", "乡镇", 4],
+          ["乡政府", "乡镇", 3],
+          ["街道办事处", "街道", 3],
         ];
         const attractorDefs = [
           ["餐饮", "餐饮"],
@@ -721,21 +941,54 @@
           ["大学", "大学"],
         ];
 
-        const [anchorResults, attractorResults, luckinStores] = await Promise.all([
-          Promise.all(anchorDefs.map(([keyword, category]) =>
-            amapSearchKeyword(city, keyword, category, 2)
-          )),
-          Promise.all(attractorDefs.map(([keyword, category]) =>
-            amapSearchKeyword(city, keyword, category, 2)
-          )),
-          fetchAmapLuckinStores(city),
-        ]);
+        const [anchorResults, attractorResults, luckinStores, brandPois] =
+          await Promise.all([
+            Promise.all(
+              anchorDefs.map(([keyword, category, pages]) =>
+                amapSearchKeyword(city, keyword, category, pages)
+              )
+            ),
+            Promise.all(
+              attractorDefs.map(([keyword, category]) =>
+                amapSearchKeyword(city, keyword, category, 2)
+              )
+            ),
+            fetchAmapLuckinStores(city),
+            fetchAmapBrandSignals(city),
+          ]);
 
         let anchors = dedupePlaces(anchorResults.flat());
-        const attractors = dedupePlaces(attractorResults.flat());
+        let attractors = dedupePlaces(attractorResults.flat());
 
         if (!anchors.length) {
           anchors = attractors.slice(0, 80);
+        }
+
+        const townshipAnchors = anchors
+          .filter((item) => item.category === "乡镇")
+          .slice(0, 60);
+        if (townshipAnchors.length) {
+          setMapStatus(
+            `已发现 ${townshipAnchors.length} 个乡镇锚点，正在补充乡镇商业扫描...`
+          );
+          const townshipTasks = townshipAnchors.map(
+            (anchor) => async () => {
+              const center = getAmapLocation(anchor);
+              if (!center) return [];
+              return await amapSearchNearByKeyword(
+                city,
+                "餐饮",
+                "乡镇餐饮",
+                center,
+                3000
+              );
+            }
+          );
+          const townshipLocalResults = await runInBatches(townshipTasks, 6);
+          attractors = dedupePlaces([
+            ...attractors,
+            ...townshipLocalResults.flat(),
+          ]);
         }
 
         const groups = [];
@@ -756,6 +1009,7 @@
             spot: {
               name: anchor.name,
               address: anchor.address || "",
+              anchor_category: anchor.category || "",
               location: anchorLoc,
               location_gcj02: anchorLoc,
               coord_type: "gcj02",
@@ -783,26 +1037,37 @@
           if (spread.length >= 30) break;
         }
 
-        return applyLuckinMetrics(
+        let payload = applyLuckinMetrics(
           {
             city,
             source: "amap_fallback",
+            scan_meta: {
+              township_anchor_count: townshipAnchors.length,
+              scan_scope: "prefecture_city_including_townships",
+            },
             hotspots: spread,
           },
           luckinStores
         );
+        payload = applyBrandSignalMetrics(payload, brandPois);
+        return payload;
       }
 
-      async function enrichWithAmapLuckin(data, city) {
+      async function enrichWithAmapMarketSignals(data, city) {
         try {
-          const luckinStores = await fetchAmapLuckinStores(city);
+          const [luckinStores, brandPois] = await Promise.all([
+            fetchAmapLuckinStores(city),
+            fetchAmapBrandSignals(city),
+          ]);
           if (luckinStores.length) {
-            return applyLuckinMetrics(data, luckinStores);
+            data = applyLuckinMetrics(data, luckinStores);
           }
+          data = applyBrandSignalMetrics(data, brandPois);
+          return data;
         } catch (error) {
-          console.warn("amap_luckin_enrich_failed", error);
+          console.warn("amap_market_signal_enrich_failed", error);
+          return data;
         }
-        return data;
       }
 
       function drawHeatmapForGroup(group) {
@@ -1136,6 +1401,7 @@
         const intro = `
           <div class="hint" style="margin-bottom:10px;">
             目标：找出“人流吸引业态多，且候选点半径 1000 米内无瑞幸”的候选热区。<br />
+            同时扫描竞品、类竞品、共生品牌；同组内越靠前的品牌权重越高。扫描范围覆盖区县并延伸到乡镇。<br />
             最近瑞幸距离按候选点到门店的直线距离计算；点击热区后地图会自动定位。
           </div>
         `;
@@ -1152,6 +1418,16 @@
             nearestLuckinDistanceRaw == null ? null : Number(nearestLuckinDistanceRaw);
           const nearestLuckin = group.nearest_luckin || null;
           const officeCount = group.office_count || 0;
+          const brandCounts = group.brand_counts || {
+            competitor: 0,
+            similar: 0,
+            coexist: 0,
+          };
+          const brandMatches = group.brand_matches || [];
+          const brandSignalScore = Number(group.brand_signal_score || 0);
+          const priorityScore = Number(
+            group.priority_score || spot.hot_score || total
+          );
           const goodForLuckin = luckinCount === 0 && total >= 5;
           const catStats = {};
           venues.forEach((item) => {
@@ -1218,9 +1494,25 @@
               ? '<span class="small-tag tag-risk">1km内已有瑞幸</span>'
               : "");
 
+          const brandLine = document.createElement("div");
+          brandLine.className = "hotspot-subtitle";
+          const matchedNames = brandMatches
+            .slice(0, 6)
+            .map((item) => item.name)
+            .join(" / ");
+          brandLine.innerHTML =
+            `品牌信号 ${brandSignalScore.toFixed(1)} 分 · 综合优先级 ${priorityScore.toFixed(1)} ` +
+            `<span class="small-tag">竞品 ${brandCounts.competitor || 0}</span>` +
+            `<span class="small-tag">类竞品 ${brandCounts.similar || 0}</span>` +
+            `<span class="small-tag">共生 ${brandCounts.coexist || 0}</span>` +
+            (matchedNames
+              ? `<br /><span style="color:#4b5563">命中：${matchedNames}</span>`
+              : "");
+
           card.appendChild(titleRow);
           card.appendChild(meta);
           card.appendChild(sub);
+          card.appendChild(brandLine);
 
           if (total > 0) {
             const poiList = document.createElement("ul");
@@ -1299,7 +1591,9 @@
             usedAmapFallback = true;
           }
 
-          data = await enrichWithAmapLuckin(data, city);
+          if (!usedAmapFallback) {
+            data = await enrichWithAmapMarketSignals(data, city);
+          }
 
           if (!((data && data.hotspots) || []).length) {
             setPageMessage("高德与 Overpass 均未生成有效候选热区。");
@@ -1352,10 +1646,11 @@
             setMapStatus("未找到热区数据，请检查后端 Overpass 返回。");
             return;
           }
+          const townshipCount = Number(data.scan_meta?.township_anchor_count || 0);
           setPageMessage(
             usedAmapFallback
-              ? "分析完成：Overpass 不可用，已自动使用高德 POI 数据；同时显示已有瑞幸门店。"
-              : "分析完成：已显示推荐热区、已有瑞幸门店、1000米范围和最近瑞幸直线距离。",
+              ? `分析完成：已使用高德 POI；品牌信号已纳入排序，乡镇锚点扫描 ${townshipCount} 个，同时显示已有瑞幸门店。`
+              : "分析完成：品牌信号已纳入排序，并显示已有瑞幸门店、1000米范围和最近瑞幸直线距离。",
             false
           );
         } catch (error) {
