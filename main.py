@@ -1111,7 +1111,16 @@ def _overpass_request_with_curl(query: str):
 
 
 def overpass_request(query: str):
-    # First use requests; if Python/OpenSSL cannot complete TLS, fall back to curl.exe.
+    # On Windows, curl.exe uses the Windows TLS stack and is often more reliable
+    # than Python/OpenSSL on networks that terminate HTTPS unexpectedly.
+    curl_exc = None
+    if sys.platform.startswith("win"):
+        try:
+            return _overpass_request_with_curl(query)
+        except Exception as exc:
+            curl_exc = exc
+            logger.warning("Windows curl.exe Overpass path failed; trying requests error=%s", exc)
+
     last_exc = None
     headers = {"User-Agent": "Luckinit/1.0"}
     for url in OVERPASS_URLS:
@@ -1136,16 +1145,18 @@ def overpass_request(query: str):
             last_exc = exc
             logger.warning("requests Overpass failed url=%s error=%s", url, exc)
 
-    logger.warning("Python requests could not reach Overpass; trying curl.exe fallback")
-    try:
-        return _overpass_request_with_curl(query)
-    except Exception as curl_exc:
-        logger.error("curl.exe Overpass fallback also failed error=%s", curl_exc)
-        if last_exc:
-            raise RuntimeError(
-                f"All Overpass transports failed. requests={last_exc}; curl={curl_exc}"
-            ) from curl_exc
-        raise
+    # Non-Windows systems, or Windows if curl was unavailable, get one curl fallback here.
+    if not sys.platform.startswith("win"):
+        try:
+            return _overpass_request_with_curl(query)
+        except Exception as exc:
+            curl_exc = exc
+            logger.error("curl Overpass fallback also failed error=%s", exc)
+
+    detail = f"requests={last_exc}"
+    if curl_exc:
+        detail += f"; curl={curl_exc}"
+    raise RuntimeError(f"All Overpass transports failed. {detail}")
 
 
 def format_address(tags: dict, lat: float, lon: float):
