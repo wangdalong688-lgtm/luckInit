@@ -93,6 +93,28 @@
         color: #4b5563;
         max-width: min(460px, calc(100% - 24px));
       }
+      .map-legend {
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        z-index: 12;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        font-size: 12px;
+        color: #4b5563;
+        line-height: 1.7;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+      }
+      .legend-dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: 0;
+      }
       .hint {
         color: #6b7280;
         font-size: 12px;
@@ -311,6 +333,13 @@
       <div id="map-shell">
         <button type="button" class="floating-toggle" data-role="toggle-filters">收起筛选</button>
         <div id="map-status" class="map-status">地图尚未初始化。</div>
+        <div class="map-legend">
+          <div><span class="legend-dot" style="background:#f97316"></span>推荐候选点</div>
+          <div><span class="legend-dot" style="background:#2563eb"></span>周边业态</div>
+          <div><span class="legend-dot" style="background:#16a34a"></span>已有瑞幸</div>
+          <div>虚线圆：候选点 1000 米范围</div>
+          <div>虚线：候选点至最近瑞幸直线距离</div>
+        </div>
         <div id="map"></div>
         <canvas id="heatmap-canvas"></canvas>
       </div>
@@ -329,9 +358,9 @@
       const PAGE_PARAMS = new URLSearchParams(window.location.search);
       const API_BASE = resolveApiBase();
       const CITY_VIEW = {
-        Beijing: { center: [116.3974, 39.9093], zoom: 12 },
-        Huizhou: { center: [114.455, 23.0817], zoom: 13 },
-        Anshan: { center: [122.9902, 41.1076], zoom: 13 },
+        Beijing: { center: [116.3974, 39.9093], zoom: 12, nameZh: "北京市" },
+        Huizhou: { center: [114.455, 23.0817], zoom: 13, nameZh: "惠州市" },
+        Anshan: { center: [122.9902, 41.1076], zoom: 13, nameZh: "鞍山市" },
       };
 
       function resolveApiBase() {
@@ -531,6 +560,251 @@
         return item?.location_gcj02 || item?.location || null;
       }
 
+      function getLngLatNumbers(location) {
+        if (!location) return null;
+        const lng =
+          typeof location.getLng === "function" ? Number(location.getLng()) : Number(location.lng);
+        const lat =
+          typeof location.getLat === "function" ? Number(location.getLat()) : Number(location.lat);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+        return { lng, lat };
+      }
+
+      function haversineDistanceM(a, b) {
+        if (!a || !b) return Infinity;
+        const R = 6371000;
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const dLat = toRad(b.lat - a.lat);
+        const dLng = toRad(b.lng - a.lng);
+        const lat1 = toRad(a.lat);
+        const lat2 = toRad(b.lat);
+        const h =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+      }
+
+      function dedupePlaces(items) {
+        const seen = new Set();
+        const output = [];
+        (items || []).forEach((item) => {
+          const loc = getAmapLocation(item);
+          if (!loc) return;
+          const key =
+            item.id ||
+            `${item.name || ""}|${Number(loc.lng).toFixed(5)}|${Number(loc.lat).toFixed(5)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          output.push(item);
+        });
+        return output;
+      }
+
+      async function ensureAmapPlaceSearch() {
+        await ensureMapReady();
+        if (window.AMap && typeof window.AMap.PlaceSearch === "function") return;
+        await new Promise((resolve, reject) => {
+          window.AMap.plugin(["AMap.PlaceSearch"], () => {
+            if (typeof window.AMap.PlaceSearch === "function") resolve();
+            else reject(new Error("AMap.PlaceSearch 插件加载失败"));
+          });
+        });
+      }
+
+      async function amapSearchKeyword(city, keyword, category, maxPages = 2) {
+        await ensureAmapPlaceSearch();
+        const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+        const all = [];
+
+        for (let pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
+          const page = await new Promise((resolve) => {
+            const service = new window.AMap.PlaceSearch({
+              city: cityName,
+              citylimit: true,
+              pageSize: 50,
+              pageIndex,
+              extensions: "all",
+            });
+            service.search(keyword, (status, result) => {
+              if (status !== "complete" || !result || !result.poiList) {
+                resolve([]);
+                return;
+              }
+              resolve(result.poiList.pois || []);
+            });
+          });
+
+          if (!page.length) break;
+          page.forEach((poi) => {
+            const loc = getLngLatNumbers(poi.location);
+            if (!loc) return;
+            all.push({
+              id: poi.id || "",
+              name: poi.name || keyword,
+              address:
+                [poi.pname, poi.cityname, poi.adname, poi.address]
+                  .filter(Boolean)
+                  .join("") || "",
+              category,
+              location: loc,
+              location_gcj02: loc,
+              tags: {
+                source: "amap",
+                type: poi.type || "",
+                tel: poi.tel || "",
+              },
+            });
+          });
+
+          if (page.length < 50) break;
+        }
+        return dedupePlaces(all);
+      }
+
+      async function fetchAmapLuckinStores(city) {
+        const results = await Promise.all([
+          amapSearchKeyword(city, "瑞幸咖啡", "瑞幸", 4),
+          amapSearchKeyword(city, "luckin coffee", "瑞幸", 2),
+        ]);
+        return dedupePlaces(results.flat()).filter((item) => isLuckinName(item.name));
+      }
+
+      function applyLuckinMetrics(data, luckinStores) {
+        data.luckin_stores = dedupePlaces(luckinStores);
+        (data.hotspots || []).forEach((group) => {
+          const spotLoc = getAmapLocation(group.spot);
+          if (!spotLoc) return;
+          const distances = data.luckin_stores
+            .map((store) => ({
+              store,
+              distance: haversineDistanceM(spotLoc, getAmapLocation(store)),
+            }))
+            .filter((item) => Number.isFinite(item.distance))
+            .sort((a, b) => a.distance - b.distance);
+
+          const nearest = distances[0] || null;
+          group.luckin_radius_m = 1000;
+          group.luckin_count = distances.filter((item) => item.distance <= 1000).length;
+          group.nearest_luckin_distance_m = nearest ? Math.round(nearest.distance) : null;
+          group.nearest_luckin = nearest
+            ? {
+                name: nearest.store.name,
+                address: nearest.store.address || "",
+                distance_m: Math.round(nearest.distance),
+                distance_type: "straight_line",
+                location: getAmapLocation(nearest.store),
+                location_gcj02: getAmapLocation(nearest.store),
+              }
+            : null;
+        });
+        return data;
+      }
+
+      async function buildAmapFallbackData(city) {
+        setMapStatus("Overpass 不可用，正在切换高德 POI 数据分析...");
+        const anchorDefs = [
+          ["购物中心", "商场"],
+          ["商场", "商场"],
+          ["商业广场", "商圈"],
+          ["写字楼", "写字楼"],
+          ["大学", "大学"],
+          ["火车站", "交通"],
+          ["大型超市", "超市"],
+        ];
+        const attractorDefs = [
+          ["餐饮", "餐饮"],
+          ["咖啡", "咖啡"],
+          ["奶茶", "奶茶"],
+          ["便利店", "便利店"],
+          ["超市", "超市"],
+          ["写字楼", "写字楼"],
+          ["大学", "大学"],
+        ];
+
+        const [anchorResults, attractorResults, luckinStores] = await Promise.all([
+          Promise.all(anchorDefs.map(([keyword, category]) =>
+            amapSearchKeyword(city, keyword, category, 2)
+          )),
+          Promise.all(attractorDefs.map(([keyword, category]) =>
+            amapSearchKeyword(city, keyword, category, 2)
+          )),
+          fetchAmapLuckinStores(city),
+        ]);
+
+        let anchors = dedupePlaces(anchorResults.flat());
+        const attractors = dedupePlaces(attractorResults.flat());
+
+        if (!anchors.length) {
+          anchors = attractors.slice(0, 80);
+        }
+
+        const groups = [];
+        anchors.forEach((anchor) => {
+          const anchorLoc = getAmapLocation(anchor);
+          const nearby = attractors
+            .map((place) => ({
+              place,
+              distance: haversineDistanceM(anchorLoc, getAmapLocation(place)),
+            }))
+            .filter((item) => item.distance <= 1200)
+            .sort((a, b) => a.distance - b.distance)
+            .map((item) => item.place);
+
+          if (!nearby.length) return;
+          const officeCount = nearby.filter((item) => item.category === "写字楼").length;
+          groups.push({
+            spot: {
+              name: anchor.name,
+              address: anchor.address || "",
+              location: anchorLoc,
+              location_gcj02: anchorLoc,
+              coord_type: "gcj02",
+              hot_score: nearby.length,
+            },
+            venues: nearby.slice(0, 80),
+            office_count: officeCount,
+          });
+        });
+
+        groups.sort((a, b) => (b.spot.hot_score || 0) - (a.spot.hot_score || 0));
+
+        const spread = [];
+        for (const group of groups) {
+          const loc = getAmapLocation(group.spot);
+          if (
+            spread.some(
+              (chosen) =>
+                haversineDistanceM(loc, getAmapLocation(chosen.spot)) < 450
+            )
+          ) {
+            continue;
+          }
+          spread.push(group);
+          if (spread.length >= 30) break;
+        }
+
+        return applyLuckinMetrics(
+          {
+            city,
+            source: "amap_fallback",
+            hotspots: spread,
+          },
+          luckinStores
+        );
+      }
+
+      async function enrichWithAmapLuckin(data, city) {
+        try {
+          const luckinStores = await fetchAmapLuckinStores(city);
+          if (luckinStores.length) {
+            return applyLuckinMetrics(data, luckinStores);
+          }
+        } catch (error) {
+          console.warn("amap_luckin_enrich_failed", error);
+        }
+        return data;
+      }
+
       function drawHeatmapForGroup(group) {
         if (!map || !group) {
           clearHeatmap();
@@ -584,14 +858,15 @@
 
       function buildMarkerContent(type, color) {
         const isHotspot = type === "hotspot";
-        const size = isHotspot ? 34 : 20;
-        const stroke = isHotspot ? 4 : 3;
+        const isLuckin = type === "luckin";
+        const size = isHotspot ? 34 : isLuckin ? 28 : 20;
+        const stroke = isHotspot ? 4 : isLuckin ? 3 : 3;
         const center = size / 2;
-        const radius = isHotspot ? 8 : 5;
-        const ringRadius = isHotspot ? 14 : 8;
+        const radius = isHotspot ? 8 : isLuckin ? 7 : 5;
+        const ringRadius = isHotspot ? 14 : isLuckin ? 11 : 8;
         return `
           <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-            <circle cx="${center}" cy="${center}" r="${ringRadius}" fill="${color}" fill-opacity="${isHotspot ? 0.18 : 0.14}" />
+            <circle cx="${center}" cy="${center}" r="${ringRadius}" fill="${color}" fill-opacity="${isHotspot ? 0.18 : isLuckin ? 0.22 : 0.14}" />
             <circle cx="${center}" cy="${center}" r="${radius}" fill="${color}" stroke="white" stroke-width="${stroke}" />
           </svg>
         `;
@@ -600,11 +875,14 @@
       function addMarker(location, title, color, type = "venue") {
         const marker = new window.AMap.Marker({
           position: [location.lng, location.lat],
-          offset: new window.AMap.Pixel(type === "hotspot" ? -17 : -10, type === "hotspot" ? -17 : -10),
+          offset: new window.AMap.Pixel(
+            type === "hotspot" ? -17 : type === "luckin" ? -14 : -10,
+            type === "hotspot" ? -17 : type === "luckin" ? -14 : -10
+          ),
           content: buildMarkerContent(type, color),
           title: title || "",
           anchor: "center",
-          zIndex: type === "hotspot" ? 200 : 120,
+          zIndex: type === "hotspot" ? 220 : type === "luckin" ? 200 : 120,
         });
 
         if (type === "hotspot") {
@@ -692,8 +970,53 @@
           addMarker(location, place.name || place.category || "门店", "#2563eb", "venue");
         });
 
+        const luckinStores = (data && data.luckin_stores) || [];
+        luckinStores.forEach((store) => {
+          const location = getAmapLocation(store);
+          if (!location) return;
+          addMarker(location, store.name || "瑞幸咖啡", "#16a34a", "luckin");
+        });
+
+        const exclusionCircle = new window.AMap.Circle({
+          center: [spotLocation.lng, spotLocation.lat],
+          radius: 1000,
+          strokeColor: "#f97316",
+          strokeWeight: 2,
+          strokeOpacity: 0.9,
+          strokeStyle: "dashed",
+          fillColor: "#f97316",
+          fillOpacity: 0.04,
+          zIndex: 90,
+        });
+        map.add(exclusionCircle);
+        currentMarkers.push(exclusionCircle);
+
+        const nearestLuckin = group.nearest_luckin || null;
+        const nearestLocation = nearestLuckin ? getAmapLocation(nearestLuckin) : null;
+        if (nearestLocation) {
+          const line = new window.AMap.Polyline({
+            path: [
+              [spotLocation.lng, spotLocation.lat],
+              [nearestLocation.lng, nearestLocation.lat],
+            ],
+            strokeColor: "#16a34a",
+            strokeWeight: 3,
+            strokeOpacity: 0.9,
+            strokeStyle: "dashed",
+            zIndex: 180,
+          });
+          map.add(line);
+          currentMarkers.push(line);
+        }
+
         map.setZoomAndCenter(15, [spotLocation.lng, spotLocation.lat]);
-        setMapStatus(`高德地图已标记热区 ${idx + 1}，可缩放并叠加热力图。`);
+        const nearestText =
+          Number.isFinite(Number(group.nearest_luckin_distance_m))
+            ? `，最近瑞幸直线距离 ${Math.round(Number(group.nearest_luckin_distance_m))} 米`
+            : "";
+        setMapStatus(
+          `已标记热区 ${idx + 1}、1000米范围及已有瑞幸 ${luckinStores.length} 家${nearestText}。`
+        );
         redrawHeatmap();
       }
 
@@ -955,31 +1278,35 @@
           setMapStatus("正在分析城市并加载高德地图...");
           let result = await fetchAnalyzeCityData(city, false);
 
+          let data = null;
+          let usedAmapFallback = false;
+
           if (!result.ok) {
             if (result.status === 401) {
               await logout();
               setPageMessage("登录已失效，请重新登录。");
               return;
             }
-            setPageMessage(`分析失败：${result.text}`);
+            setPageMessage("Overpass 不可用，正在自动切换高德 POI 数据...", false);
+            data = await buildAmapFallbackData(city);
+            usedAmapFallback = true;
+          } else {
+            data = result.data;
+          }
+          if (!((data && data.hotspots) || []).length && !usedAmapFallback) {
+            setMapStatus("Overpass 未返回有效热区，正在切换高德 POI 数据...");
+            data = await buildAmapFallbackData(city);
+            usedAmapFallback = true;
+          }
+
+          data = await enrichWithAmapLuckin(data, city);
+
+          if (!((data && data.hotspots) || []).length) {
+            setPageMessage("高德与 Overpass 均未生成有效候选热区。");
+            setMapStatus("暂无可用候选热区。");
             return;
           }
 
-          let data = result.data;
-          if (!((data && data.hotspots) || []).length) {
-            setMapStatus("未找到热区数据，正在强制刷新后端结果...");
-            result = await fetchAnalyzeCityData(city, true);
-            if (!result.ok) {
-              if (result.status === 401) {
-                await logout();
-                setPageMessage("登录已失效，请重新登录。");
-                return;
-              }
-              setPageMessage(`分析失败：${result.text}`);
-              return;
-            }
-            data = result.data;
-          }
           lastData = data;
           activeHotspotIndex = 0;
 
@@ -1025,7 +1352,12 @@
             setMapStatus("未找到热区数据，请检查后端 Overpass 返回。");
             return;
           }
-          setPageMessage("分析完成：已显示推荐热区、GCJ-02 坐标与热力图。", false);
+          setPageMessage(
+            usedAmapFallback
+              ? "分析完成：Overpass 不可用，已自动使用高德 POI 数据；同时显示已有瑞幸门店。"
+              : "分析完成：已显示推荐热区、已有瑞幸门店、1000米范围和最近瑞幸直线距离。",
+            false
+          );
         } catch (error) {
           console.error("analyze_failed", error);
           setPageMessage(
