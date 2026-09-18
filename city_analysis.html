@@ -824,7 +824,9 @@
           const total = venues.length;
           const luckinCount = Number(group.luckin_count || 0);
           const luckinRadiusM = Number(group.luckin_radius_m || 1000);
-          const nearestLuckinDistanceM = Number(group.nearest_luckin_distance_m);
+          const nearestLuckinDistanceRaw = group.nearest_luckin_distance_m;
+          const nearestLuckinDistanceM =
+            nearestLuckinDistanceRaw == null ? null : Number(nearestLuckinDistanceRaw);
           const nearestLuckin = group.nearest_luckin || null;
           const officeCount = group.office_count || 0;
           const goodForLuckin = luckinCount === 0 && total >= 5;
@@ -884,7 +886,7 @@
             nearestLuckin && nearestLuckin.name ? ` · ${nearestLuckin.name}` : "";
           sub.innerHTML =
             `主力业态：${topCats || "暂无"} ` +
-            `<span class="small-tag">1km内瑞幸 ${luckinCount} 家</span>` +
+            `<span class="small-tag">${Math.round(luckinRadiusM)}m内瑞幸 ${luckinCount} 家</span>` +
             `<span class="small-tag">最近瑞幸 ${nearestLuckinText}${nearestLuckinName}</span>` +
             `<span class="small-tag">办公 ${officeCount} 处</span>` +
             (goodForLuckin
