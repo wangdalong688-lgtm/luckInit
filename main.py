@@ -229,16 +229,25 @@ def baidu_js_proxy(endpoint: str, request: Request, _user=Depends(require_curren
 
     upstream_url = f"https://api.map.baidu.com/{endpoint}"
     params = dict(request.query_params)
+    # Keep the Baidu AK on the server side so the HTML does not need to hard-code it.
+    if BAIDU_MAP_AK and not params.get("ak"):
+        params["ak"] = BAIDU_MAP_AK
 
     try:
-        resp = requests.get(upstream_url, params=params, timeout=30)
+        resp = request_with_network_fallback(
+            "GET",
+            upstream_url,
+            params=params,
+            timeout=(8, 30),
+            headers={"User-Agent": "Mozilla/5.0 LuckinitBaiduProxy"},
+        )
         resp.raise_for_status()
     except Exception:
         log_exception_to_terminal(
             "baidu_js_proxy failed",
             endpoint=endpoint,
             upstream_url=upstream_url,
-            params=params,
+            params={k: ("***" if k == "ak" else v) for k, v in params.items()},
         )
         raise HTTPException(status_code=502, detail="Baidu JS SDK proxy unavailable")
 
