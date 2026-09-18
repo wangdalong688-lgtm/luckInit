@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 import sqlite3
+import subprocess
 import secrets
 import sys
 import time
@@ -61,9 +62,12 @@ def log_exception_to_terminal(message: str, **context):
 
 # Overpass API 地址，用于检索 OpenStreetMap 数据（按顺序回退）
 OVERPASS_URLS = [
+    # Prefer mirrors that are geographically closer to China, then fall back globally.
+    "https://overpass.nchc.org.tw/api/interpreter",
+    "https://overpass.osm.jp/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
 ]
 
 # 北京六环大致范围（南, 西, 北, 东），后续查询都限制在这个盒子内
@@ -1037,34 +1041,111 @@ def fetch_admin_area_id(city: str):
     return None
 
 
+def _parse_overpass_json(raw_text: str, url: str):
+    data = json.loads(raw_text)
+    remark = (data.get("remark") or "").strip()
+    if remark and not data.get("elements"):
+        raise RuntimeError(f"Overpass remark from {url}: {remark}")
+    return data.get("elements", [])
+
+
+def _overpass_request_with_curl(query: str):
+    """
+    Windows fallback: curl.exe usually uses the Windows TLS stack, which can work
+    when Python/OpenSSL gets SSL EOF errors on the same network.
+    """
+    payload = urllib.parse.urlencode({"data": query})
+    last_error = None
+    for url in OVERPASS_URLS:
+        try:
+            proc = subprocess.run(
+                [
+                    "curl.exe",
+                    "-L",
+                    "--fail-with-body",
+                    "--silent",
+                    "--show-error",
+                    "--connect-timeout",
+                    "8",
+                    "--max-time",
+                    "55",
+                    "-A",
+                    "Luckinit/1.0",
+                    "-H",
+                    "Content-Type: application/x-www-form-urlencoded",
+                    "--data-binary",
+                    "@-",
+                    url,
+                ],
+                input=payload,
+                text=True,
+                capture_output=True,
+                timeout=65,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("curl.exe is unavailable") from exc
+        except Exception as exc:
+            last_error = exc
+            logger.warning("curl Overpass failed url=%s error=%s", url, exc)
+            continue
+
+        if proc.returncode != 0:
+            last_error = RuntimeError(
+                f"curl exit={proc.returncode} url={url} stderr={proc.stderr[-500:]}"
+            )
+            logger.warning("%s", last_error)
+            continue
+
+        try:
+            elements = _parse_overpass_json(proc.stdout, url)
+            logger.info("Overpass success via curl endpoint=%s elements=%s", url, len(elements))
+            return elements
+        except Exception as exc:
+            last_error = exc
+            logger.warning("curl Overpass invalid response url=%s error=%s", url, exc)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("No Overpass curl endpoint succeeded")
+
+
 def overpass_request(query: str):
-    # 发送 Overpass 查询并提取元素列表（多端点回退）
+    # First use requests; if Python/OpenSSL cannot complete TLS, fall back to curl.exe.
     last_exc = None
+    headers = {"User-Agent": "Luckinit/1.0"}
     for url in OVERPASS_URLS:
         try:
             resp = request_with_network_fallback(
                 "POST",
                 url,
                 data={"data": query},
-                timeout=60,
+                headers=headers,
+                timeout=(8, 45),
             )
-            # 429/5xx 在 Overpass 上较常见，尝试回退
             if resp.status_code == 429 or resp.status_code >= 500:
                 last_exc = requests.HTTPError(
                     f"{resp.status_code} from {url}", response=resp
                 )
                 continue
             resp.raise_for_status()
-            data = resp.json()
-            return data.get("elements", [])
-        except Exception as e:
-            last_exc = e
-            logger.warning("overpass_request failed for url=%s error=%s", url, e)
-            continue
-    if last_exc:
-        log_exception_to_terminal("overpass_request failed", urls=OVERPASS_URLS)
-        raise last_exc
-    return []
+            elements = _parse_overpass_json(resp.text, url)
+            logger.info("Overpass success via requests endpoint=%s elements=%s", url, len(elements))
+            return elements
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("requests Overpass failed url=%s error=%s", url, exc)
+
+    logger.warning("Python requests could not reach Overpass; trying curl.exe fallback")
+    try:
+        return _overpass_request_with_curl(query)
+    except Exception as curl_exc:
+        logger.error("curl.exe Overpass fallback also failed error=%s", curl_exc)
+        if last_exc:
+            raise RuntimeError(
+                f"All Overpass transports failed. requests={last_exc}; curl={curl_exc}"
+            ) from curl_exc
+        raise
 
 
 def format_address(tags: dict, lat: float, lon: float):
