@@ -1204,7 +1204,7 @@ PWD_ITERS = 180_000
 SESSION_TTL_SECONDS = 7 * 24 * 3600
 CACHE_TTL_SECONDS = 6 * 3600
 # 缓存版本：用于在算法/查询方式变化时失效旧缓存
-CACHE_VERSION = 14
+CACHE_VERSION = 15
 
 
 def hash_password(password: str) -> str:
@@ -1515,6 +1515,9 @@ def fetch_attractors(city: str):
 {amenity_filters}
 {shop_filters}
 {chr(10).join(office_filters)}
+      nwr["name"~"瑞幸|luckin",i](area:{area_id});
+      nwr["brand"~"瑞幸|luckin",i](area:{area_id});
+      nwr["operator"~"瑞幸|luckin",i](area:{area_id});
     );
     out center;
     """
@@ -1524,7 +1527,12 @@ def fetch_attractors(city: str):
         log_exception_to_terminal("fetch_attractors failed", city=city)
         raise
     venues = []
+    seen_venue_ids = set()
     for el in elements:
+        venue_key = (el.get("type"), el.get("id"))
+        if venue_key in seen_venue_ids:
+            continue
+        seen_venue_ids.add(venue_key)
         tags = el.get("tags", {})
         center = el.get("center") or {}
         lat = el.get("lat") or center.get("lat")
@@ -1560,6 +1568,20 @@ def fetch_attractors(city: str):
             }
         )
     return venues
+
+
+def is_luckin_venue(venue: dict) -> bool:
+    tags = venue.get("tags") or {}
+    text = " ".join(
+        str(value or "")
+        for value in (
+            venue.get("name"),
+            tags.get("name"),
+            tags.get("brand"),
+            tags.get("operator"),
+        )
+    )
+    return "瑞幸" in text or "luckin" in text.lower()
 
 
 # ---------------- 距离计算（米） ----------------
@@ -1710,6 +1732,7 @@ def build_hotspots(city: str, radius_m: int = 1200, limit: int = 30):
     """
     hotspots = fetch_hotspot_candidates(city)
     venues = fetch_attractors(city)
+    luckin_venues = [venue for venue in venues if is_luckin_venue(venue)]
 
     result = []
     for spot in hotspots:
@@ -1721,6 +1744,18 @@ def build_hotspots(city: str, radius_m: int = 1200, limit: int = 30):
             if d <= radius_m:
                 nearby_venues.append(v)
 
+        luckin_distances = [
+            (
+                haversine_distance_m(lat_s, lon_s, venue["lat"], venue["lon"]),
+                venue,
+            )
+            for venue in luckin_venues
+        ]
+        luckin_within_1000 = [
+            item for item in luckin_distances if item[0] <= 1000
+        ]
+        nearest_luckin = min(luckin_distances, key=lambda item: item[0]) if luckin_distances else None
+
         score = len(nearby_venues)
         if score == 0:
             continue
@@ -1730,6 +1765,11 @@ def build_hotspots(city: str, radius_m: int = 1200, limit: int = 30):
             {
                 "spot": spot,
                 "venues": nearby_venues,
+                "luckin_within_1000_count": len(luckin_within_1000),
+                "nearest_luckin_distance_m": (
+                    round(nearest_luckin[0]) if nearest_luckin else None
+                ),
+                "nearest_luckin": nearest_luckin[1] if nearest_luckin else None,
             }
         )
 
@@ -2241,7 +2281,7 @@ def build_mengniu_beijing_candidates(limit: int = 50, radius_m: int = 1800):
 
 @app.get("/analyze_city")
 def analyze_city(
-    city: str = Query(..., description="城市名，例如 Beijing / 北京 / 惠州"),
+    city: str = Query(..., description="城市名，例如 Beijing / 北京 / 惠州 / 鞍山"),
     refresh: bool = Query(False, description="是否强制刷新缓存"),
     _user=Depends(get_current_user),
 ):
@@ -2260,13 +2300,10 @@ def analyze_city(
         spot = group["spot"]
         venues = group["venues"]
 
-        # 统计这个热点范围内的瑞幸门店数量
-        luckin_count = sum(
-            1
-            for v in venues
-            if "瑞幸" in (v.get("name") or "")
-            or "luckin" in (v.get("name") or "").lower()
-        )
+        # 瑞幸竞争口径：候选点半径 1000 米内是否存在瑞幸；最近距离按直线距离计算。
+        luckin_count = int(group.get("luckin_within_1000_count") or 0)
+        nearest_luckin_distance_m = group.get("nearest_luckin_distance_m")
+        nearest_luckin = group.get("nearest_luckin")
         office_count = sum(
             1
             for v in venues
@@ -2302,11 +2339,31 @@ def analyze_city(
                 }
             )
 
+        nearest_luckin_out = None
+        if nearest_luckin:
+            n_bd_lat, n_bd_lon = wgs84_to_bd09(
+                nearest_luckin["lat"], nearest_luckin["lon"]
+            )
+            n_gcj_lat, n_gcj_lon = wgs84_to_gcj02(
+                nearest_luckin["lat"], nearest_luckin["lon"]
+            )
+            nearest_luckin_out = {
+                "name": nearest_luckin.get("name") or "瑞幸咖啡",
+                "distance_m": nearest_luckin_distance_m,
+                "distance_type": "straight_line",
+                "location": {"lat": n_gcj_lat, "lng": n_gcj_lon},
+                "location_gcj02": {"lat": n_gcj_lat, "lng": n_gcj_lon},
+                "location_bd09": {"lat": n_bd_lat, "lng": n_bd_lon},
+            }
+
         output.append(
             {
                 "spot": spot_out,
                 "venues": venues_out,
                 "luckin_count": luckin_count,
+                "luckin_radius_m": 1000,
+                "nearest_luckin": nearest_luckin_out,
+                "nearest_luckin_distance_m": nearest_luckin_distance_m,
                 "office_count": office_count,
             }
         )

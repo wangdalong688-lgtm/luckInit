@@ -304,8 +304,8 @@
     <div id="layout">
       <div id="sidebar">
         <div class="hint">
-          目标：找出“人流吸引业态多，但周边缺少瑞幸”的候选热区。<br />
-          当前页面已切到高德动态地图，点击左侧热区后会自动定位到街区级别。
+          目标：找出“人流吸引业态多，且候选点半径 1000 米内无瑞幸”的候选热区。<br />
+          最近瑞幸距离按直线距离计算；点击左侧热区后会自动定位到街区级别。
         </div>
       </div>
       <div id="map-shell">
@@ -812,8 +812,8 @@
 
         const intro = `
           <div class="hint" style="margin-bottom:10px;">
-            目标：找出“人流吸引业态多，但周边缺少瑞幸”的候选热区。<br />
-            点击任一热区后，高德地图会自动定位到街区级别。
+            目标：找出“人流吸引业态多，且候选点半径 1000 米内无瑞幸”的候选热区。<br />
+            最近瑞幸距离按候选点到门店的直线距离计算；点击热区后地图会自动定位。
           </div>
         `;
 
@@ -822,7 +822,10 @@
           const spot = group.spot || {};
           const venues = group.venues || [];
           const total = venues.length;
-          const luckinCount = group.luckin_count || 0;
+          const luckinCount = Number(group.luckin_count || 0);
+          const luckinRadiusM = Number(group.luckin_radius_m || 1000);
+          const nearestLuckinDistanceM = Number(group.nearest_luckin_distance_m);
+          const nearestLuckin = group.nearest_luckin || null;
           const officeCount = group.office_count || 0;
           const goodForLuckin = luckinCount === 0 && total >= 5;
           const catStats = {};
@@ -871,14 +874,23 @@
 
           const sub = document.createElement("div");
           sub.className = "hotspot-subtitle";
+          const nearestLuckinText =
+            Number.isFinite(nearestLuckinDistanceM) && nearestLuckinDistanceM >= 0
+              ? nearestLuckinDistanceM < 1000
+                ? `${Math.round(nearestLuckinDistanceM)} 米（直线）`
+                : `${(nearestLuckinDistanceM / 1000).toFixed(2)} 公里（直线）`
+              : "未检索到";
+          const nearestLuckinName =
+            nearestLuckin && nearestLuckin.name ? ` · ${nearestLuckin.name}` : "";
           sub.innerHTML =
             `主力业态：${topCats || "暂无"} ` +
-            `<span class="small-tag">瑞幸 ${luckinCount} 家</span>` +
+            `<span class="small-tag">1km内瑞幸 ${luckinCount} 家</span>` +
+            `<span class="small-tag">最近瑞幸 ${nearestLuckinText}${nearestLuckinName}</span>` +
             `<span class="small-tag">办公 ${officeCount} 处</span>` +
             (goodForLuckin
-              ? '<span class="small-tag tag-good">适合开瑞幸</span>'
+              ? '<span class="small-tag tag-good">1km内无瑞幸</span>'
               : luckinCount > 0
-              ? '<span class="small-tag tag-risk">已有瑞幸</span>'
+              ? '<span class="small-tag tag-risk">1km内已有瑞幸</span>'
               : "");
 
           card.appendChild(titleRow);
