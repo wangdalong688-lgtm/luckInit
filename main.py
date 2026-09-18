@@ -25,11 +25,27 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
-def request_without_env_proxy(method: str, url: str, **kwargs):
+def request_with_network_fallback(method: str, url: str, **kwargs):
+    """
+    Prefer the normal requests network path so Windows/env proxy settings can work.
+    If that path fails at connection/SSL level, retry once without environment proxy.
+    """
+    first_exc = None
+    try:
+        return requests.request(method=method, url=url, **kwargs)
+    except requests.RequestException as exc:
+        first_exc = exc
+        logger.warning("request via environment proxy failed url=%s error=%s", url, exc)
+
     session = requests.Session()
     session.trust_env = False
     try:
         return session.request(method=method, url=url, **kwargs)
+    except requests.RequestException as exc:
+        logger.warning("direct request fallback failed url=%s error=%s", url, exc)
+        if first_exc:
+            raise exc from first_exc
+        raise
     finally:
         session.close()
 
@@ -54,6 +70,8 @@ OVERPASS_URLS = [
 BEIJING_BBOX = (39.2, 115.7, 40.6, 117.5)
 # 惠州大致范围（南, 西, 北, 东）
 HUIZHOU_BBOX = (22.6, 113.7, 23.8, 115.3)
+# 鞍山试点范围（南, 西, 北, 东）
+ANSHAN_BBOX = (40.75, 122.55, 41.35, 123.45)
 
 # 支持的城市与对应 bbox
 CITY_BBOXES = {
@@ -61,6 +79,9 @@ CITY_BBOXES = {
     "北京": BEIJING_BBOX,
     "huizhou": HUIZHOU_BBOX,
     "惠州": HUIZHOU_BBOX,
+    "anshan": ANSHAN_BBOX,
+    "鞍山": ANSHAN_BBOX,
+    "鞍山市": ANSHAN_BBOX,
 }
 
 app = FastAPI()
@@ -983,7 +1004,7 @@ def resolve_bbox(city: str):
     return CITY_BBOXES.get(key) or CITY_BBOXES.get(city)
 
 
-# 目前仅支持北京/惠州，直接使用已知的 OSM 行政边界 relation id，避免误匹配/超时
+# 使用已知的 OSM 行政边界 relation id，避免误匹配/超时；辽宁先以鞍山作为试点
 CITY_BOUNDARY_REL_IDS = {
     "beijing": 912940,  # 北京市（admin_level=4）
     "北京": 912940,
@@ -991,6 +1012,9 @@ CITY_BOUNDARY_REL_IDS = {
     "huizhou": 3209912,  # 惠州市（admin_level=5）
     "惠州": 3209912,
     "惠州市": 3209912,
+    "anshan": 2769683,  # 鞍山市（OSM relation）
+    "鞍山": 2769683,
+    "鞍山市": 2769683,
 }
 
 
@@ -1018,7 +1042,7 @@ def overpass_request(query: str):
     last_exc = None
     for url in OVERPASS_URLS:
         try:
-            resp = request_without_env_proxy(
+            resp = request_with_network_fallback(
                 "POST",
                 url,
                 data={"data": query},
@@ -1293,7 +1317,7 @@ def me(user=Depends(get_current_user)):
 def fetch_hotspot_candidates(city: str):
     """
     用城市行政边界查商场/百货/集市/写字楼作为热点候选（严格按边界）
-    目前支持北京、惠州；查不到边界则返回空列表
+    当前支持北京、惠州，以及辽宁鞍山试点；查不到边界则返回空列表
     """
     area_id = fetch_admin_area_id(city)
     if not area_id:
@@ -1304,7 +1328,12 @@ def fetch_hotspot_candidates(city: str):
     (
       nwr["shop"="mall"](area:{area_id});
       nwr["shop"="department_store"](area:{area_id});
+      nwr["shop"="supermarket"](area:{area_id});
       nwr["amenity"="marketplace"](area:{area_id});
+      nwr["amenity"="university"](area:{area_id});
+      nwr["amenity"="college"](area:{area_id});
+      nwr["railway"="station"](area:{area_id});
+      nwr["public_transport"="station"](area:{area_id});
       nwr["building"="office"](area:{area_id});
       nwr["amenity"="business_centre"](area:{area_id});
     );
@@ -1314,7 +1343,7 @@ def fetch_hotspot_candidates(city: str):
         elements = overpass_request(query)
     except Exception:
         log_exception_to_terminal("fetch_hotspots failed", city=city)
-        return []
+        raise
     hotspots = []
     for el in elements:
         tags = el.get("tags", {})
@@ -1337,6 +1366,8 @@ def fetch_hotspot_candidates(city: str):
                 "tags": tags,
                 "type": tags.get("shop")
                 or tags.get("amenity")
+                or tags.get("railway")
+                or tags.get("public_transport")
                 or ("office" if tags.get("building") == "office" else None),
             }
         )
@@ -1347,7 +1378,7 @@ def fetch_attractors(city: str):
     """
     扩大人流吸引业态，除了咖啡/甜品，加入餐饮、酒吧、面包房等
     同时考虑写字楼/商务中心密度，作为人流来源
-    目前支持北京、惠州（严格按行政边界）
+    当前支持北京、惠州，以及辽宁鞍山试点（严格按行政边界）
     """
     area_id = fetch_admin_area_id(city)
     if not area_id:
@@ -1399,7 +1430,7 @@ def fetch_attractors(city: str):
         elements = overpass_request(query)
     except Exception:
         log_exception_to_terminal("fetch_attractors failed", city=city)
-        return []
+        raise
     venues = []
     for el in elements:
         tags = el.get("tags", {})

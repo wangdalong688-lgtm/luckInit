@@ -257,6 +257,7 @@
       <span>城市：</span>
       <select id="city-select">
         <option value="Huizhou">Huizhou / 惠州</option>
+        <option value="Anshan">Anshan / 鞍山（辽宁试点）</option>
         <option value="Beijing">Beijing / 北京</option>
       </select>
       <button id="analyze-btn" onclick="loadData()">分析</button>
@@ -290,6 +291,7 @@
           type="checkbox"
           id="heatmap-toggle"
           onchange="toggleHeatmap(this.checked)"
+          checked
         />
         显示热力图
       </label>
@@ -326,6 +328,11 @@
       let baseTileLayer = null;
       const PAGE_PARAMS = new URLSearchParams(window.location.search);
       const API_BASE = resolveApiBase();
+      const CITY_VIEW = {
+        Beijing: { center: [116.3974, 39.9093], zoom: 12 },
+        Huizhou: { center: [114.455, 23.0817], zoom: 13 },
+        Anshan: { center: [122.9902, 41.1076], zoom: 13 },
+      };
 
       function resolveApiBase() {
         const fromQuery = (PAGE_PARAMS.get("apiBase") || "").trim();
@@ -856,7 +863,11 @@
 
           const meta = document.createElement("div");
           meta.className = "hotspot-meta";
-          meta.textContent = `${spot.address || "无地址信息"} | 周边店铺 ${total} 家`;
+          const spotLoc = getAmapLocation(spot);
+          const coordText = spotLoc
+            ? ` | 推荐坐标 ${Number(spotLoc.lng).toFixed(6)}, ${Number(spotLoc.lat).toFixed(6)}`
+            : "";
+          meta.textContent = `${spot.address || "无地址信息"} | 周边店铺 ${total} 家${coordText}`;
 
           const sub = document.createElement("div");
           sub.className = "hotspot-subtitle";
@@ -956,10 +967,11 @@
             data = result.data;
           }
           lastData = data;
+          activeHotspotIndex = 0;
 
           await ensureMapReady();
-          const center =
-            city === "Beijing" ? [116.3974, 39.9093] : [114.455, 23.0817];
+          const cityView = CITY_VIEW[city] || CITY_VIEW.Huizhou;
+          const center = cityView.center;
 
           const hotspots = data.hotspots || [];
           const points = [];
@@ -988,7 +1000,7 @@
             );
             map.setCenter(center);
           } else {
-            map.setZoomAndCenter(city === "Beijing" ? 12 : 13, center);
+            map.setZoomAndCenter(cityView.zoom, center);
           }
 
           renderSidebar(data);
@@ -999,7 +1011,7 @@
             setMapStatus("未找到热区数据，请检查后端 Overpass 返回。");
             return;
           }
-          setPageMessage("分析完成，地图已切换为高德并显示热区。", false);
+          setPageMessage("分析完成：已显示推荐热区、GCJ-02 坐标与热力图。", false);
         } catch (error) {
           console.error("analyze_failed", error);
           setPageMessage(

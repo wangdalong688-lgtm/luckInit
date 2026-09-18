@@ -1,0 +1,10 @@
+{
+  "province": "辽宁省",
+  "city_en": "Anshan",
+  "city_zh": "鞍山市",
+  "status": "pilot",
+  "data_mode": "osm_overpass",
+  "osm_relation_id": 2769683,
+  "map_center_gcj02_approx": [122.9902, 41.1076],
+  "note": "Reference Huizhou implementation. No Beijing Excel dependency."
+}
