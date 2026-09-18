@@ -348,6 +348,7 @@
     <script>
       let map = null;
       let mapReadyPromise = null;
+      let baiduReadyPromise = null;
       let mapSdkPatched = false;
       let activeHotspotIndex = 0;
       let currentHeatGroup = null;
@@ -660,6 +661,194 @@
         return output;
       }
 
+      function bd09ToGcj02Point(lat, lon) {
+        const x = lon - 0.0065;
+        const y = lat - 0.006;
+        const z =
+          Math.sqrt(x * x + y * y) -
+          0.00002 * Math.sin((y * Math.PI * 3000.0) / 180.0);
+        const theta =
+          Math.atan2(y, x) -
+          0.000003 * Math.cos((x * Math.PI * 3000.0) / 180.0);
+        return {
+          lng: z * Math.cos(theta),
+          lat: z * Math.sin(theta),
+        };
+      }
+
+      async function loadBaiduSdk() {
+        if (
+          window.BMap &&
+          typeof window.BMap.LocalSearch === "function" &&
+          typeof window.BMap.Point === "function"
+        ) {
+          return;
+        }
+        if (baiduReadyPromise) return baiduReadyPromise;
+
+        baiduReadyPromise = new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = apiUrl("/proxy/baidu/getscript?v=3.0&services=");
+          script.async = true;
+          script.onload = () => {
+            if (
+              window.BMap &&
+              typeof window.BMap.LocalSearch === "function" &&
+              typeof window.BMap.Point === "function"
+            ) {
+              resolve();
+            } else {
+              reject(new Error("Baidu SDK loaded but BMap.LocalSearch unavailable"));
+            }
+          };
+          script.onerror = () => reject(new Error("baidu_sdk_loader_failed"));
+          document.head.appendChild(script);
+        }).catch((error) => {
+          baiduReadyPromise = null;
+          throw error;
+        });
+
+        return baiduReadyPromise;
+      }
+
+      async function baiduSearchKeyword(city, keyword, category) {
+        await loadBaiduSdk();
+        const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+
+        return await new Promise((resolve) => {
+          let finished = false;
+          const finish = (items) => {
+            if (finished) return;
+            finished = true;
+            resolve(dedupePlaces(items || []));
+          };
+
+          const timeoutId = setTimeout(() => finish([]), 12000);
+          try {
+            const local = new window.BMap.LocalSearch(cityName, {
+              pageCapacity: 50,
+              onSearchComplete(results) {
+                clearTimeout(timeoutId);
+                if (
+                  !results ||
+                  typeof results.getCurrentNumPois !== "function" ||
+                  typeof results.getPoi !== "function"
+                ) {
+                  finish([]);
+                  return;
+                }
+
+                const items = [];
+                const count = Number(results.getCurrentNumPois() || 0);
+                for (let i = 0; i < count; i += 1) {
+                  const poi = results.getPoi(i);
+                  if (!poi || !poi.point) continue;
+                  const bd = {
+                    lng: Number(poi.point.lng),
+                    lat: Number(poi.point.lat),
+                  };
+                  if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) continue;
+                  const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
+                  items.push({
+                    id: poi.uid || "",
+                    name: poi.title || keyword,
+                    address: poi.address || "",
+                    category,
+                    location: gcj,
+                    location_gcj02: gcj,
+                    location_bd09: bd,
+                    tags: {
+                      source: "baidu",
+                      phoneNumber: poi.phoneNumber || "",
+                    },
+                  });
+                }
+                finish(items);
+              },
+            });
+            local.search(keyword);
+          } catch (error) {
+            clearTimeout(timeoutId);
+            console.warn("baidu_search_failed", city, keyword, error);
+            finish([]);
+          }
+        });
+      }
+
+      async function baiduSearchNearbyKeyword(
+        city,
+        keyword,
+        category,
+        centerBd09,
+        radius = 3000
+      ) {
+        await loadBaiduSdk();
+        const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+
+        return await new Promise((resolve) => {
+          let finished = false;
+          const finish = (items) => {
+            if (finished) return;
+            finished = true;
+            resolve(dedupePlaces(items || []));
+          };
+          const timeoutId = setTimeout(() => finish([]), 12000);
+
+          try {
+            const local = new window.BMap.LocalSearch(cityName, {
+              pageCapacity: 50,
+              onSearchComplete(results) {
+                clearTimeout(timeoutId);
+                if (
+                  !results ||
+                  typeof results.getCurrentNumPois !== "function" ||
+                  typeof results.getPoi !== "function"
+                ) {
+                  finish([]);
+                  return;
+                }
+
+                const items = [];
+                const count = Number(results.getCurrentNumPois() || 0);
+                for (let i = 0; i < count; i += 1) {
+                  const poi = results.getPoi(i);
+                  if (!poi || !poi.point) continue;
+                  const bd = {
+                    lng: Number(poi.point.lng),
+                    lat: Number(poi.point.lat),
+                  };
+                  if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) continue;
+                  const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
+                  items.push({
+                    id: poi.uid || "",
+                    name: poi.title || keyword,
+                    address: poi.address || "",
+                    category,
+                    location: gcj,
+                    location_gcj02: gcj,
+                    location_bd09: bd,
+                    tags: {
+                      source: "baidu_nearby",
+                      phoneNumber: poi.phoneNumber || "",
+                    },
+                  });
+                }
+                finish(items);
+              },
+            });
+            const center = new window.BMap.Point(
+              Number(centerBd09.lng),
+              Number(centerBd09.lat)
+            );
+            local.searchNearby(keyword, center, radius);
+          } catch (error) {
+            clearTimeout(timeoutId);
+            console.warn("baidu_nearby_search_failed", city, keyword, error);
+            finish([]);
+          }
+        });
+      }
+
       async function ensureAmapPlaceSearch() {
         await ensureMapReady();
         if (window.AMap && typeof window.AMap.PlaceSearch === "function") return;
@@ -878,6 +1067,233 @@
         return data;
       }
 
+      async function fetchBaiduBrandSignals(city) {
+        const tasks = BRAND_DEFINITIONS.map(
+          (definition) => async () => {
+            const places = await baiduSearchKeyword(
+              city,
+              definition.query,
+              definition.groupLabel
+            );
+            return places.map((place) => ({
+              ...place,
+              brand: definition.name,
+              brand_group: definition.groupKey,
+              brand_group_label: definition.groupLabel,
+              brand_rank: definition.rank,
+              brand_weight: definition.weight,
+            }));
+          }
+        );
+        const results = await runInBatches(tasks, 4);
+        return dedupePlaces(results.flat());
+      }
+
+      async function fetchBaiduLuckinStores(city) {
+        const results = await runInBatches(
+          [
+            () => baiduSearchKeyword(city, "瑞幸咖啡", "瑞幸"),
+            () => baiduSearchKeyword(city, "luckin coffee", "瑞幸"),
+          ],
+          2
+        );
+        return dedupePlaces(results.flat()).filter((item) =>
+          isLuckinName(item.name)
+        );
+      }
+
+      function mergeLuckinStores(amapStores, baiduStores) {
+        const merged = [];
+        (amapStores || []).forEach((store) => {
+          merged.push({
+            ...store,
+            sources: ["amap"],
+            dual_source_confirmed: false,
+          });
+        });
+
+        (baiduStores || []).forEach((store) => {
+          const storeLoc = getAmapLocation(store);
+          if (!storeLoc) return;
+          let best = null;
+          let bestDistance = Infinity;
+          merged.forEach((candidate) => {
+            const distance = haversineDistanceM(
+              getAmapLocation(candidate),
+              storeLoc
+            );
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = candidate;
+            }
+          });
+
+          if (best && bestDistance <= 180) {
+            best.sources = Array.from(new Set([...(best.sources || []), "baidu"]));
+            best.dual_source_confirmed = best.sources.length > 1;
+            best.baidu_name = store.name;
+            best.location_bd09 = store.location_bd09 || best.location_bd09;
+          } else {
+            merged.push({
+              ...store,
+              sources: ["baidu"],
+              dual_source_confirmed: false,
+            });
+          }
+        });
+
+        return dedupePlaces(merged);
+      }
+
+      async function buildBaiduFallbackData(city) {
+        setMapStatus("高德 POI 未生成候选点，正在切换百度 POI 数据分析...");
+
+        const anchorDefs = [
+          ["购物中心", "商场"],
+          ["商场", "商场"],
+          ["商业广场", "商圈"],
+          ["写字楼", "写字楼"],
+          ["大学", "大学"],
+          ["火车站", "交通"],
+          ["大型超市", "超市"],
+          ["镇政府", "乡镇"],
+          ["乡政府", "乡镇"],
+          ["街道办事处", "街道"],
+        ];
+        const attractorDefs = [
+          ["餐饮", "餐饮"],
+          ["咖啡", "咖啡"],
+          ["奶茶", "奶茶"],
+          ["便利店", "便利店"],
+          ["超市", "超市"],
+          ["写字楼", "写字楼"],
+          ["大学", "大学"],
+        ];
+
+        const [anchorResults, attractorResults, luckinStores, brandPois] =
+          await Promise.all([
+            runInBatches(
+              anchorDefs.map(
+                ([keyword, category]) =>
+                  () => baiduSearchKeyword(city, keyword, category)
+              ),
+              4
+            ),
+            runInBatches(
+              attractorDefs.map(
+                ([keyword, category]) =>
+                  () => baiduSearchKeyword(city, keyword, category)
+              ),
+              4
+            ),
+            fetchBaiduLuckinStores(city),
+            fetchBaiduBrandSignals(city),
+          ]);
+
+        let anchors = dedupePlaces(anchorResults.flat());
+        let attractors = dedupePlaces(attractorResults.flat());
+
+        if (!anchors.length) anchors = attractors.slice(0, 80);
+
+        const townshipAnchors = anchors
+          .filter((item) => item.category === "乡镇" && item.location_bd09)
+          .slice(0, 60);
+
+        if (townshipAnchors.length) {
+          setMapStatus(
+            `百度已发现 ${townshipAnchors.length} 个乡镇锚点，正在补充乡镇商业扫描...`
+          );
+          const townshipTasks = townshipAnchors.map(
+            (anchor) => async () =>
+              baiduSearchNearbyKeyword(
+                city,
+                "餐饮",
+                "乡镇餐饮",
+                anchor.location_bd09,
+                3000
+              )
+          );
+          const townshipResults = await runInBatches(townshipTasks, 5);
+          attractors = dedupePlaces([
+            ...attractors,
+            ...townshipResults.flat(),
+          ]);
+        }
+
+        const groups = [];
+        anchors.forEach((anchor) => {
+          const anchorLoc = getAmapLocation(anchor);
+          if (!anchorLoc) return;
+          const nearby = attractors
+            .map((place) => ({
+              place,
+              distance: haversineDistanceM(
+                anchorLoc,
+                getAmapLocation(place)
+              ),
+            }))
+            .filter(
+              (item) =>
+                Number.isFinite(item.distance) && item.distance <= 1200
+            )
+            .sort((a, b) => a.distance - b.distance)
+            .map((item) => item.place);
+
+          if (!nearby.length) return;
+          const officeCount = nearby.filter(
+            (item) => item.category === "写字楼"
+          ).length;
+          groups.push({
+            spot: {
+              name: anchor.name,
+              address: anchor.address || "",
+              anchor_category: anchor.category || "",
+              location: anchorLoc,
+              location_gcj02: anchorLoc,
+              location_bd09: anchor.location_bd09 || null,
+              coord_type: "gcj02",
+              hot_score: nearby.length,
+            },
+            venues: nearby.slice(0, 80),
+            office_count: officeCount,
+          });
+        });
+
+        groups.sort(
+          (a, b) => (b.spot.hot_score || 0) - (a.spot.hot_score || 0)
+        );
+
+        const spread = [];
+        for (const group of groups) {
+          const loc = getAmapLocation(group.spot);
+          if (
+            spread.some(
+              (chosen) =>
+                haversineDistanceM(loc, getAmapLocation(chosen.spot)) < 450
+            )
+          ) {
+            continue;
+          }
+          spread.push(group);
+          if (spread.length >= 30) break;
+        }
+
+        let payload = applyLuckinMetrics(
+          {
+            city,
+            source: "baidu_fallback",
+            scan_meta: {
+              township_anchor_count: townshipAnchors.length,
+              scan_scope: "prefecture_city_including_townships",
+            },
+            hotspots: spread,
+          },
+          luckinStores
+        );
+        payload = applyBrandSignalMetrics(payload, brandPois);
+        return payload;
+      }
+
       async function fetchAmapLuckinStores(city) {
         const results = await Promise.all([
           amapSearchKeyword(city, "瑞幸咖啡", "瑞幸", 4),
@@ -1066,6 +1482,46 @@
           return data;
         } catch (error) {
           console.warn("amap_market_signal_enrich_failed", error);
+          return data;
+        }
+      }
+
+      async function enrichWithBaiduMarketSignals(data, city) {
+        try {
+          const [baiduLuckinStores, baiduBrandPois] = await Promise.all([
+            fetchBaiduLuckinStores(city),
+            fetchBaiduBrandSignals(city),
+          ]);
+
+          const currentLuckinStores = data.luckin_stores || [];
+          const mergedLuckinStores = mergeLuckinStores(
+            currentLuckinStores,
+            baiduLuckinStores
+          );
+          if (mergedLuckinStores.length) {
+            data = applyLuckinMetrics(data, mergedLuckinStores);
+          }
+
+          const mergedBrandPois = dedupePlaces([
+            ...(data.brand_pois || []),
+            ...baiduBrandPois,
+          ]);
+          data = applyBrandSignalMetrics(data, mergedBrandPois);
+          data.source_calibration = {
+            ...(data.source_calibration || {}),
+            baidu: true,
+            baidu_luckin_count: baiduLuckinStores.length,
+            dual_source_luckin_count: mergedLuckinStores.filter(
+              (item) => item.dual_source_confirmed
+            ).length,
+          };
+          return data;
+        } catch (error) {
+          console.warn("baidu_market_signal_enrich_failed", error);
+          data.source_calibration = {
+            ...(data.source_calibration || {}),
+            baidu: false,
+          };
           return data;
         }
       }
@@ -1572,6 +2028,7 @@
 
           let data = null;
           let usedAmapFallback = false;
+          let usedBaiduFallback = false;
 
           if (!result.ok) {
             if (result.status === 401) {
@@ -1579,25 +2036,57 @@
               setPageMessage("登录已失效，请重新登录。");
               return;
             }
-            setPageMessage("Overpass 不可用，正在自动切换高德 POI 数据...", false);
-            data = await buildAmapFallbackData(city);
+            setPageMessage(
+              "Overpass 不可用，正在自动切换高德 POI；如无结果将继续切换百度 POI...",
+              false
+            );
+            try {
+              data = await buildAmapFallbackData(city);
+            } catch (error) {
+              console.warn("amap_fallback_failed", error);
+              data = { city, hotspots: [] };
+            }
             usedAmapFallback = true;
           } else {
             data = result.data;
           }
+
           if (!((data && data.hotspots) || []).length && !usedAmapFallback) {
             setMapStatus("Overpass 未返回有效热区，正在切换高德 POI 数据...");
-            data = await buildAmapFallbackData(city);
+            try {
+              data = await buildAmapFallbackData(city);
+            } catch (error) {
+              console.warn("amap_fallback_failed", error);
+              data = { city, hotspots: [] };
+            }
             usedAmapFallback = true;
           }
 
-          if (!usedAmapFallback) {
+          if (!((data && data.hotspots) || []).length) {
+            setPageMessage(
+              "高德 POI 未生成候选点，正在自动切换百度 POI...",
+              false
+            );
+            try {
+              data = await buildBaiduFallbackData(city);
+            } catch (error) {
+              console.warn("baidu_fallback_failed", error);
+              data = { city, hotspots: [] };
+            }
+            usedBaiduFallback = true;
+          }
+
+          if (!usedAmapFallback && !usedBaiduFallback) {
             data = await enrichWithAmapMarketSignals(data, city);
           }
 
+          if (((data && data.hotspots) || []).length && !usedBaiduFallback) {
+            data = await enrichWithBaiduMarketSignals(data, city);
+          }
+
           if (!((data && data.hotspots) || []).length) {
-            setPageMessage("高德与 Overpass 均未生成有效候选热区。");
-            setMapStatus("暂无可用候选热区。");
+            setPageMessage("Overpass、高德和百度均未生成有效候选热区。");
+            setMapStatus("暂无可用候选热区。请检查地图服务授权或网络连接。");
             return;
           }
 
@@ -1647,12 +2136,23 @@
             return;
           }
           const townshipCount = Number(data.scan_meta?.township_anchor_count || 0);
-          setPageMessage(
-            usedAmapFallback
-              ? `分析完成：已使用高德 POI；品牌信号已纳入排序，乡镇锚点扫描 ${townshipCount} 个，同时显示已有瑞幸门店。`
-              : "分析完成：品牌信号已纳入排序，并显示已有瑞幸门店、1000米范围和最近瑞幸直线距离。",
-            false
+          const baiduCalibrated = data.source_calibration?.baidu === true;
+          const dualConfirmed = Number(
+            data.source_calibration?.dual_source_luckin_count || 0
           );
+          let successText =
+            "分析完成：品牌信号已纳入排序，并显示已有瑞幸门店、1000米范围和最近瑞幸直线距离。";
+          if (usedBaiduFallback) {
+            successText =
+              `分析完成：高德/Overpass未生成候选点，已使用百度 POI；乡镇锚点扫描 ${townshipCount} 个。`;
+          } else if (usedAmapFallback) {
+            successText =
+              `分析完成：已使用高德 POI；乡镇锚点扫描 ${townshipCount} 个。`;
+          }
+          if (baiduCalibrated) {
+            successText += ` 百度已参与校准，双源确认瑞幸 ${dualConfirmed} 家。`;
+          }
+          setPageMessage(successText, false);
         } catch (error) {
           console.error("analyze_failed", error);
           setPageMessage(
