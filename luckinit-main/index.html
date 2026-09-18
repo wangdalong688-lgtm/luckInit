@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Luckinit 登录入口</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #f4f1e8;
+        --card: rgba(255, 255, 255, 0.92);
+        --line: #d8d0c1;
+        --text: #2c2418;
+        --muted: #746758;
+        --brand: #b45309;
+        --brand-dark: #92400e;
+        --brand-soft: #fff5e8;
+        --ok: #166534;
+        --danger: #b91c1c;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(252, 211, 77, 0.4), transparent 26%),
+          radial-gradient(circle at bottom right, rgba(251, 146, 60, 0.24), transparent 28%),
+          linear-gradient(180deg, #f8f5ef 0%, var(--bg) 100%);
+      }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .shell {
+        width: min(1040px, 100%);
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 420px);
+        gap: 22px;
+      }
+
+      .hero,
+      .panel {
+        border: 1px solid rgba(44, 36, 24, 0.08);
+        border-radius: 28px;
+        background: var(--card);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 18px 48px rgba(82, 58, 24, 0.09);
+      }
+
+      .hero {
+        padding: 34px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 560px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        width: fit-content;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #fff7ed;
+        color: var(--brand-dark);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+      }
+
+      h1 {
+        margin: 18px 0 14px;
+        font-size: clamp(34px, 4vw, 52px);
+        line-height: 1.08;
+      }
+
+      .lead {
+        max-width: 560px;
+        font-size: 16px;
+        line-height: 1.8;
+        color: var(--muted);
+      }
+
+      .nav-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 28px;
+      }
+
+      .nav-card {
+        padding: 18px 16px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: #fff;
+        text-align: left;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+      }
+
+      .nav-card:hover:not(:disabled) {
+        transform: translateY(-2px);
+        border-color: #f59e0b;
+        box-shadow: 0 14px 28px rgba(180, 83, 9, 0.12);
+      }
+
+      .nav-card:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .nav-title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .nav-desc {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+
+      .panel {
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .panel h2 {
+        margin: 0 0 10px;
+        font-size: 26px;
+      }
+
+      .panel .sub {
+        margin: 0 0 22px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .field {
+        margin-bottom: 14px;
+      }
+
+      .field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .field input {
+        width: 100%;
+        border: 1px solid #d6cfc2;
+        border-radius: 14px;
+        padding: 12px 14px;
+        font-size: 15px;
+        color: var(--text);
+        background: #fff;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 8px;
+      }
+
+      button {
+        border: none;
+        border-radius: 14px;
+        padding: 12px 16px;
+        min-height: 46px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--brand) 0%, #ea580c 100%);
+        color: #fff;
+        box-shadow: 0 12px 24px rgba(180, 83, 9, 0.18);
+      }
+
+      .btn-secondary {
+        background: #fff;
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      #auth-status {
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      #page-message {
+        min-height: 22px;
+        margin-top: 14px;
+        font-size: 13px;
+      }
+
+      .ok {
+        color: var(--ok);
+      }
+
+      .error {
+        color: var(--danger);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 920px) {
+        body {
+          padding: 14px;
+          align-items: stretch;
+        }
+
+        .shell {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+
+        .hero {
+          min-height: auto;
+          padding: 22px 18px;
+          border-radius: 22px;
+        }
+
+        .panel {
+          padding: 22px 18px;
+          border-radius: 22px;
+        }
+
+        h1 {
+          margin-top: 14px;
+          font-size: clamp(30px, 9vw, 40px);
+        }
+
+        .lead {
+          font-size: 14px;
+          line-height: 1.75;
+        }
+
+        .nav-grid {
+          grid-template-columns: 1fr;
+          gap: 10px;
+          margin-top: 18px;
+        }
+
+        .nav-card {
+          padding: 16px 14px;
+          border-radius: 16px;
+        }
+
+        .actions {
+          flex-direction: column;
+        }
+
+        .actions button {
+          width: 100%;
+        }
+
+        .field input {
+          min-height: 48px;
+          font-size: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Luckinit Workspace</div>
+          <h1>登录后进入你的地图与选址工具</h1>
+          <div class="lead">
+            这里收拢了当前几个正式页面。登录成功后可以直接进入城市分析、蒙牛北京候选点、北京写字楼地图，所有页面都继续要求授权访问。
+          </div>
+        </div>
+
+        <div class="nav-grid">
+          <button class="nav-card" data-target="/city_analysis" disabled>
+            <div class="nav-title">城市分析</div>
+            <div class="nav-desc">查看城市热点、业态分布和瑞幸竞争关系。</div>
+          </button>
+          <button class="nav-card" data-target="/mengniu_beijing" disabled>
+            <div class="nav-title">蒙牛北京</div>
+            <div class="nav-desc">查看北京候选点位、热区和地图分布。</div>
+          </button>
+          <button class="nav-card" data-target="/beijing_office_map" disabled>
+            <div class="nav-title">北京写字楼地图</div>
+            <div class="nav-desc">按区域筛选写字楼并在地图上查看详细参数。</div>
+          </button>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <div id="login-panel">
+          <h2>登录</h2>
+          <p class="sub">先验证账号，登录成功后右侧功能按钮会解锁。</p>
+
+          <div class="field">
+            <label for="username-input">用户名</label>
+            <input id="username-input" autocomplete="username" />
+          </div>
+
+          <div class="field">
+            <label for="password-input">密码</label>
+            <input
+              id="password-input"
+              type="password"
+              autocomplete="current-password"
+            />
+          </div>
+
+          <div class="actions">
+            <button id="login-btn" class="btn-primary" type="button">登录</button>
+          </div>
+        </div>
+
+        <div id="logged-panel" class="hidden">
+          <h2>已登录</h2>
+          <p class="sub">你现在可以从左侧按钮进入各个功能页面。</p>
+          <div class="actions">
+            <button id="open-default-btn" class="btn-primary" type="button">
+              进入默认页面
+            </button>
+            <button id="logout-btn" class="btn-secondary" type="button">
+              退出登录
+            </button>
+          </div>
+        </div>
+
+        <div id="auth-status">未登录</div>
+        <div id="page-message"></div>
+      </aside>
+    </div>
+
+    <script>
+      const PAGE_PARAMS = new URLSearchParams(window.location.search);
+      const API_BASE = resolveApiBase();
+      let authToken = localStorage.getItem("authToken") || "";
+
+      function resolveApiBase() {
+        const fromQuery = (PAGE_PARAMS.get("apiBase") || "").trim();
+        if (fromQuery) return fromQuery.replace(/\/+$/, "");
+        const fromStorage = (localStorage.getItem("apiBase") || "").trim();
+        if (fromStorage) return fromStorage.replace(/\/+$/, "");
+        if (window.location.protocol === "file:") return "http://127.0.0.1:8008";
+        return window.location.origin.replace(/\/+$/, "");
+      }
+
+      function apiUrl(path) {
+        return `${API_BASE}${path}`;
+      }
+
+      function getNextPath() {
+        const next = (PAGE_PARAMS.get("next") || "").trim();
+        return next.startsWith("/") ? next : "";
+      }
+
+      function setPageMessage(message = "", isError = true) {
+        const el = document.getElementById("page-message");
+        el.textContent = message || "";
+        el.className = isError ? "error" : "ok";
+      }
+
+      function setAuthUI(loggedIn, username = "") {
+        document.getElementById("login-panel").classList.toggle("hidden", loggedIn);
+        document.getElementById("logged-panel").classList.toggle("hidden", !loggedIn);
+        document.getElementById("auth-status").textContent = loggedIn
+          ? `已登录：${username}`
+          : "未登录";
+        document.querySelectorAll(".nav-card").forEach((button) => {
+          button.disabled = !loggedIn;
+        });
+      }
+
+      function openTarget(path) {
+        if (!path) return;
+        window.location.href = path;
+      }
+
+      function redirectAfterLoginIfNeeded() {
+        const next = getNextPath();
+        if (next) {
+          openTarget(next);
+          return true;
+        }
+        return false;
+      }
+
+      async function checkAuth() {
+        if (!authToken) {
+          setAuthUI(false);
+          return;
+        }
+        try {
+          const resp = await fetch(apiUrl("/auth/me"), {
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+          if (!resp.ok) {
+            authToken = "";
+            localStorage.removeItem("authToken");
+            setAuthUI(false);
+            return;
+          }
+          const data = await resp.json();
+          setAuthUI(true, data.username || "");
+          if (!redirectAfterLoginIfNeeded()) {
+            setPageMessage("登录状态有效，可以进入功能页面。", false);
+          }
+        } catch (error) {
+          console.error("check_auth_failed", error);
+          setAuthUI(false);
+        }
+      }
+
+      async function login() {
+        const username = document.getElementById("username-input").value.trim();
+        const password = document.getElementById("password-input").value;
+        if (!username || !password) {
+          setPageMessage("请输入用户名和密码。");
+          return;
+        }
+        try {
+          const resp = await fetch(apiUrl("/auth/login"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          if (!resp.ok) {
+            setPageMessage(`登录失败：${await resp.text()}`);
+            return;
+          }
+          const data = await resp.json();
+          authToken = data.token || "";
+          localStorage.setItem("authToken", authToken);
+          document.getElementById("password-input").value = "";
+          setAuthUI(true, data.username || username);
+          setPageMessage("登录成功。", false);
+          if (redirectAfterLoginIfNeeded()) return;
+        } catch (error) {
+          console.error("login_failed", error);
+          setPageMessage(`登录请求失败，请确认接口可用：${API_BASE}`);
+        }
+      }
+
+      async function logout() {
+        if (authToken) {
+          try {
+            await fetch(apiUrl("/auth/logout"), {
+              method: "POST",
+              headers: { Authorization: `Bearer ${authToken}` },
+            });
+          } catch (error) {
+            console.error("logout_failed", error);
+          }
+        }
+        authToken = "";
+        localStorage.removeItem("authToken");
+        setAuthUI(false);
+        setPageMessage("已退出登录。", false);
+      }
+
+      document.getElementById("login-btn").addEventListener("click", login);
+      document.getElementById("logout-btn").addEventListener("click", logout);
+      document.getElementById("open-default-btn").addEventListener("click", () => {
+        openTarget("/city_analysis");
+      });
+      document.getElementById("password-input").addEventListener("keydown", async (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          await login();
+        }
+      });
+      document.querySelectorAll(".nav-card").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (!button.disabled) {
+            openTarget(button.dataset.target || "");
+          }
+        });
+      });
+
+      checkAuth();
+    </script>
+  </body>
+</html>

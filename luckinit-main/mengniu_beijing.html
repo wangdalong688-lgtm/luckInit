@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>北京选址长名单</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --line: #dbe3ef;
+        --text: #0f172a;
+        --muted: #64748b;
+        --brand: #1677ff;
+        --brand-soft: #eff6ff;
+        --accent: #0f766e;
+        --danger: #b91c1c;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #topbar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.96);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(10px);
+      }
+
+      #topbar h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .meta {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      button {
+        border: 1px solid var(--brand);
+        background: var(--brand);
+        color: #fff;
+        border-radius: 8px;
+        padding: 6px 12px;
+        min-height: 40px;
+        font-size: 13px;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      button.secondary {
+        border-color: var(--accent);
+        background: var(--accent);
+      }
+
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #334155;
+      }
+
+      #message {
+        font-size: 12px;
+        color: var(--danger);
+      }
+      body.filters-collapsed #topbar {
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      body.filters-collapsed #topbar > :not([data-persistent="1"]) {
+        display: none !important;
+      }
+      body.filters-collapsed #map-shell,
+      body.filters-collapsed #map {
+        min-height: 72vh;
+      }
+
+      #layout {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+
+      #sidebar {
+        width: 420px;
+        max-width: 100%;
+        overflow-y: auto;
+        padding: 14px;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+      }
+
+      #map-shell {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        min-height: 60vh;
+      }
+      .floating-toggle {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 16;
+        box-shadow: 0 8px 20px rgba(22, 119, 255, 0.16);
+      }
+
+      #map {
+        width: 100%;
+        height: 100%;
+        min-height: 60vh;
+      }
+
+      #heatmap-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 2;
+        opacity: 0.82;
+      }
+
+      #map-status {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        z-index: 10;
+        max-width: min(480px, calc(100% - 24px));
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        color: #475569;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .brief {
+        margin-bottom: 14px;
+        padding: 12px;
+        border: 1px solid #dbeafe;
+        background: #eff6ff;
+        border-radius: 12px;
+      }
+
+      .brief h2 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .brief ul {
+        margin: 8px 0 0 18px;
+        padding: 0;
+        color: #334155;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .detail-panel {
+        margin-bottom: 14px;
+        padding: 12px;
+        border: 1px solid #dbe3ef;
+        background: #f8fafc;
+        border-radius: 12px;
+      }
+
+      .detail-panel h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      .detail-empty {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .merged-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .merged-item {
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid #dbe3ef;
+        background: #fff;
+      }
+
+      .merged-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .merged-meta {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+      }
+
+      .card:hover {
+        border-color: #38bdf8;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+        transform: translateY(-1px);
+      }
+
+      .card.active {
+        border-color: var(--brand);
+        background: var(--brand-soft);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .rank {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: var(--brand);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .sub,
+      .addr {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .tag {
+        font-size: 11px;
+        color: #475569;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        padding: 2px 8px;
+        background: #fff;
+      }
+
+      .open-btn {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 12px;
+      }
+
+      .label-chip {
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(220, 38, 38, 0.96);
+        border: 1px solid rgba(153, 27, 27, 0.45);
+        box-shadow: 0 4px 14px rgba(220, 38, 38, 0.22);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 980px) {
+        #topbar {
+          padding: 10px;
+          gap: 8px;
+        }
+
+        #topbar h1 {
+          width: 100%;
+          font-size: 20px;
+        }
+
+        #topbar > button,
+        #topbar > .toggle {
+          flex: 1 1 calc(50% - 8px);
+        }
+
+        #message,
+        #topbar .meta {
+          width: 100%;
+        }
+
+        #layout {
+          flex-direction: column;
+        }
+
+        #sidebar {
+          width: 100%;
+          max-height: 40vh;
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+          padding: 10px;
+        }
+
+        #map-shell,
+        #map {
+          min-height: 60vh;
+        }
+      }
+    </style>
+    <script>
+      const AMAP_KEY = "f4ca682a3333034a1ee832e6f939ed8e";
+      const AMAP_SECURITY_JS_CODE = "f4ca682a3333034a1ee832e6f939ed8e";
+      window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_JS_CODE };
+    </script>
+  </head>
+  <body>
+    <div id="topbar">
+      <button data-persistent="1" onclick="window.location.href='/'">首页</button>
+      <h1 data-persistent="1">北京选址长名单</h1>
+      <button onclick="loadCandidates(false)">加载 50 个候选点</button>
+      <button class="secondary" onclick="loadCandidates(true)">强制刷新数据</button>
+      <button onclick="focusAllCandidates()">查看全部候选点</button>
+      <label class="toggle">
+        <input id="heatmap-toggle" type="checkbox" onchange="toggleHeatmap(this.checked)" />
+        显示热力图
+      </label>
+      <div id="message"></div>
+      <div class="meta">当前页面使用高德动态地图，坐标系为 GCJ-02。版本 2026-03-30-a</div>
+    </div>
+
+    <div id="layout">
+      <div id="sidebar">
+        <div class="brief">
+          <h2>筛选口径</h2>
+          <div class="sub">
+            这版结果会对办公浓度给更高权重，并支持在地图上叠加候选点热力图。
+          </div>
+          <ul>
+            <li>目标品牌：蒙牛 YogurtDay / 饮品 POP 店型，约 45㎡，含座位区。</li>
+            <li>优先北京核心商圈与写字楼密度更高的复合片区。</li>
+            <li>按饮品、餐饮、办公、娱乐和场景复合度综合排序。</li>
+            <li>结果会对近邻点位做合并，但尽量保留约 50 个可比较候选点。</li>
+          </ul>
+        </div>
+        <div class="detail-panel">
+          <h3>合并前候选</h3>
+          <div class="detail-empty" id="candidate-detail-body">点击左侧卡片或地图标注后，在这里看这个点合并前的备选位置。</div>
+        </div>
+        <div id="list"></div>
+      </div>
+      <div id="map-shell">
+        <button type="button" class="floating-toggle" data-role="toggle-filters">收起筛选</button>
+        <div id="map-status">地图准备中...</div>
+        <div id="map"></div>
+        <canvas id="heatmap-canvas"></canvas>
+      </div>
+    </div>
+
+    <script>
+      const TIANANMEN_CENTER = [116.3975, 39.9087];
+      const API_BASE = resolveApiBase();
+      let map = null;
+      let sdkPromise = null;
+      let markers = [];
+      let markerByIndex = [];
+      let activeMarker = null;
+      let currentData = null;
+      let amapProxyPatched = false;
+      let baseTileLayer = null;
+      let heatLayer = null;
+      let expandedMarkerIndexes = new Set();
+      let showAllMarkers = false;
+
+      function resolveApiBase() {
+        if (window.location.protocol === "file:") return "http://127.0.0.1:8008";
+        return window.location.origin.replace(/\/+$/, "");
+      }
+
+      function getAuthToken() {
+        return localStorage.getItem("authToken") || "";
+      }
+
+      function setMessage(message = "", isError = true) {
+        const el = document.getElementById("message");
+        el.textContent = message;
+        el.style.color = isError ? "#b91c1c" : "#475569";
+      }
+
+      function setMapStatus(message) {
+        document.getElementById("map-status").textContent = message;
+      }
+
+      function applyFilterCollapseUI() {
+        const collapsed = document.body.classList.contains("filters-collapsed");
+        document.querySelectorAll('[data-role="toggle-filters"]').forEach((btn) => {
+          btn.textContent = collapsed ? "展开筛选" : "收起筛选";
+        });
+      }
+
+      function toggleFilters(force) {
+        const next =
+          typeof force === "boolean"
+            ? force
+            : !document.body.classList.contains("filters-collapsed");
+        document.body.classList.toggle("filters-collapsed", next);
+        try {
+          localStorage.setItem("mengniuFiltersCollapsed", next ? "1" : "0");
+        } catch (error) {}
+        applyFilterCollapseUI();
+        if (map && typeof map.resize === "function") {
+          setTimeout(() => map.resize(), 60);
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, (char) => {
+          return (
+            {
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            }[char] || char
+          );
+        });
+      }
+
+      function getSafeZoom(defaultZoom = 11) {
+        if (!map || typeof map.getZoom !== "function") return defaultZoom;
+        const zoom = Number(map.getZoom());
+        return Number.isFinite(zoom) ? zoom : defaultZoom;
+      }
+
+      function getSafeCenter(defaultCenter = TIANANMEN_CENTER) {
+        if (!map || typeof map.getCenter !== "function") {
+          return { lng: defaultCenter[0], lat: defaultCenter[1] };
+        }
+        const center = map.getCenter();
+        const lng = Number(center && center.lng);
+        const lat = Number(center && center.lat);
+        return {
+          lng: Number.isFinite(lng) ? lng : defaultCenter[0],
+          lat: Number.isFinite(lat) ? lat : defaultCenter[1],
+        };
+      }
+
+      function proxiedAmapUrl(src, assetType = "asset") {
+        try {
+          const url = new URL(src, window.location.href);
+          const hostname = (url.hostname || "").toLowerCase();
+          const isAmapScriptHost = hostname === "webapi.amap.com";
+          const isAmapTileHost =
+            hostname.endsWith(".is.autonavi.com") &&
+            /^(webrd0|wprd0|webst0)/.test(hostname);
+          if (!isAmapScriptHost && !isAmapTileHost) return src;
+          const proxyPath =
+            assetType === "script" ? "/proxy/remote-script?url=" : "/proxy/remote-asset?url=";
+          return `${API_BASE}${proxyPath}${encodeURIComponent(url.href)}`;
+        } catch (error) {
+          return src;
+        }
+      }
+
+      function patchAmapAssetProxy() {
+        if (amapProxyPatched) return;
+        amapProxyPatched = true;
+
+        const originalSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function patchedSetAttribute(name, value) {
+          if (
+            typeof value === "string" &&
+            (name === "src" || name === "href") &&
+            this &&
+            (this.tagName === "SCRIPT" || this.tagName === "IMG")
+          ) {
+            const assetType = this.tagName === "SCRIPT" ? "script" : "asset";
+            value = proxiedAmapUrl(value, assetType);
+          }
+          return originalSetAttribute.call(this, name, value);
+        };
+
+        const imageSrcDescriptor = Object.getOwnPropertyDescriptor(
+          HTMLImageElement.prototype,
+          "src"
+        );
+        if (imageSrcDescriptor && imageSrcDescriptor.set) {
+          Object.defineProperty(HTMLImageElement.prototype, "src", {
+            configurable: true,
+            enumerable: imageSrcDescriptor.enumerable,
+            get: imageSrcDescriptor.get,
+            set(value) {
+              return imageSrcDescriptor.set.call(this, proxiedAmapUrl(value, "asset"));
+            },
+          });
+        }
+      }
+
+      function buildAmapTileUrl(x, y, z) {
+        const rawUrl =
+          `https://webrd01.is.autonavi.com/appmaptile?` +
+          `lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`;
+        return proxiedAmapUrl(rawUrl, "asset");
+      }
+
+      function loadAmapSdk() {
+        if (window.AMap && typeof window.AMap.Map === "function") {
+          return Promise.resolve();
+        }
+        if (sdkPromise) return sdkPromise;
+
+        patchAmapAssetProxy();
+        const sdkUrl =
+          `${API_BASE}/proxy/remote-script?url=` +
+          encodeURIComponent(`https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`);
+
+        setMapStatus("正在加载高德地图 SDK...");
+        sdkPromise = new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = sdkUrl;
+          script.async = true;
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error("高德 SDK 加载失败"));
+          document.head.appendChild(script);
+        })
+          .then(() => {
+            if (!window.AMap || typeof window.AMap.Map !== "function") {
+              throw new Error("高德 SDK 已返回，但 AMap 对象不可用");
+            }
+          })
+          .catch((error) => {
+            sdkPromise = null;
+            throw error;
+          });
+
+        return sdkPromise;
+      }
+
+      function buildLabelConfig(index, rank, name) {
+        const variants = [
+          { direction: "right", offset: [14, -2] },
+          { direction: "left", offset: [-14, -2] },
+          { direction: "top", offset: [0, -16] },
+          { direction: "bottom", offset: [0, 12] },
+        ];
+        const variant = variants[index % variants.length];
+        return {
+          direction: variant.direction,
+          offset: new window.AMap.Pixel(variant.offset[0], variant.offset[1]),
+          content: `<div class="label-chip">${rank}. ${name || "候选点"}</div>`,
+        };
+      }
+
+      function getMarkerSpacingPx() {
+        const zoom = getSafeZoom();
+        if (zoom >= 16) return 18;
+        if (zoom >= 15) return 24;
+        if (zoom >= 14) return 30;
+        if (zoom >= 13) return 38;
+        if (zoom >= 12) return 46;
+        return 56;
+      }
+
+      function getExpandRadiusPx() {
+        const zoom = getSafeZoom();
+        if (zoom >= 16) return 96;
+        if (zoom >= 15) return 112;
+        if (zoom >= 14) return 126;
+        return 140;
+      }
+
+      function getMarkerPixel(marker) {
+        if (!map || !marker) return null;
+        const position = marker.getPosition();
+        if (!position) return null;
+        return map.lngLatToContainer(position);
+      }
+
+      function updateExpandedMarkerIndexes(index) {
+        expandedMarkerIndexes = new Set();
+        if (!map || index < 0) return;
+
+        const sourceMarker = markerByIndex[index];
+        const sourcePixel = getMarkerPixel(sourceMarker);
+        if (!sourceMarker || !sourcePixel) return;
+
+        const radius = getExpandRadiusPx();
+        expandedMarkerIndexes.add(index);
+
+        markers.forEach((marker) => {
+          const pixel = getMarkerPixel(marker);
+          if (!pixel) return;
+          const distance = Math.hypot(pixel.x - sourcePixel.x, pixel.y - sourcePixel.y);
+          if (distance <= radius) {
+            expandedMarkerIndexes.add(marker.__index);
+          }
+        });
+      }
+
+      function setMarkerVisible(marker, visible) {
+        marker.__visible = visible;
+        if (visible) {
+          marker.show();
+          return;
+        }
+        marker.hide();
+        marker.setLabel(null);
+      }
+
+      function refreshMarkerVisibility() {
+        if (!map || !markers.length) return;
+
+        if (showAllMarkers) {
+          markers.forEach((marker) => setMarkerVisible(marker, true));
+          refreshMarkerLabels();
+          return;
+        }
+
+        const minDistance = getMarkerSpacingPx();
+        const lockedIndexes = new Set(expandedMarkerIndexes);
+        if (activeMarker && Number.isInteger(activeMarker.__index)) {
+          lockedIndexes.add(activeMarker.__index);
+        }
+
+        const visiblePixels = [];
+        markers.forEach((marker) => {
+          marker.__pixel = getMarkerPixel(marker);
+        });
+
+        markers.forEach((marker) => {
+          const pixel = marker.__pixel;
+          if (!pixel) {
+            setMarkerVisible(marker, false);
+            return;
+          }
+
+          if (lockedIndexes.has(marker.__index)) {
+            setMarkerVisible(marker, true);
+            return;
+          }
+
+          const blocked = visiblePixels.some(
+            (item) => Math.hypot(item.x - pixel.x, item.y - pixel.y) < minDistance
+          );
+          if (blocked) {
+            setMarkerVisible(marker, false);
+            return;
+          }
+
+          visiblePixels.push(pixel);
+          setMarkerVisible(marker, true);
+        });
+
+        refreshMarkerLabels();
+      }
+
+      function refreshMarkerLabels() {
+        if (!map || !markers.length) return;
+        const zoom = getSafeZoom();
+        const visibleCount =
+          zoom >= 15 ? 50 : zoom >= 14 ? 36 : zoom >= 13 ? 24 : zoom >= 12 ? 14 : 0;
+
+        markers.forEach((marker, index) => {
+          if (marker === activeMarker) return;
+          if (!marker.__visible) {
+            marker.setLabel(null);
+            return;
+          }
+          if (index < visibleCount || expandedMarkerIndexes.has(marker.__index)) {
+            marker.setLabel(buildLabelConfig(index, marker.__rank, marker.__name));
+          } else {
+            marker.setLabel(null);
+          }
+        });
+      }
+
+      function resizeHeatCanvas() {
+        const shell = document.getElementById("map-shell");
+        const canvas = document.getElementById("heatmap-canvas");
+        const width = shell.clientWidth;
+        const height = shell.clientHeight;
+        if (!width || !height) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (heatLayer && typeof heatLayer.reFresh === "function") {
+          heatLayer.reFresh();
+        }
+      }
+
+      function clearHeatmap() {
+        const canvas = document.getElementById("heatmap-canvas");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (heatLayer && typeof heatLayer.reFresh === "function") {
+          heatLayer.reFresh();
+        }
+      }
+
+      function ensureHeatLayer() {
+        if (!map || heatLayer || !window.AMap) return;
+        const canvas = document.getElementById("heatmap-canvas");
+
+        if (typeof window.AMap.CanvasLayer === "function") {
+          heatLayer = new window.AMap.CanvasLayer({
+            canvas,
+            zIndex: 90,
+            zooms: [3, 20],
+          });
+          heatLayer.setMap(map);
+          return;
+        }
+
+        const mapEl = document.getElementById("map");
+        mapEl.style.position = "relative";
+        mapEl.style.zIndex = "3";
+      }
+
+      function drawHeatmap() {
+        if (!map || !currentData || !document.getElementById("heatmap-toggle").checked) {
+          clearHeatmap();
+          return;
+        }
+
+        resizeHeatCanvas();
+        const canvas = document.getElementById("heatmap-canvas");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        (currentData.candidates || []).forEach((candidate) => {
+          if (!candidate.location) return;
+          const point = new window.AMap.LngLat(candidate.location.lng, candidate.location.lat);
+          const pixel = map.lngLatToContainer(point);
+          if (!pixel) return;
+
+          const facilityCount =
+            (candidate.office_count || 0) +
+            (candidate.drink_count || 0) +
+            (candidate.food_count || 0) +
+            (candidate.leisure_count || 0);
+          const facilityMixBoost = Math.min(18, (candidate.category_count || 0) * 1.8);
+          const weight =
+            (candidate.office_count || 0) * 1.4 +
+            (candidate.drink_count || 0) * 2.1 +
+            (candidate.food_count || 0) * 1.9 +
+            (candidate.leisure_count || 0) * 1.6 +
+            facilityCount * 1.3 +
+            facilityMixBoost +
+            (candidate.hot_score || 0) * 0.38 +
+            (candidate.score || 0) * 0.08;
+          const radius = Math.max(48, Math.min(118, 30 + weight * 0.95));
+
+          const gradient = ctx.createRadialGradient(
+            pixel.x,
+            pixel.y,
+            0,
+            pixel.x,
+            pixel.y,
+            radius
+          );
+          gradient.addColorStop(0, "rgba(220, 38, 38, 0.62)");
+          gradient.addColorStop(0.22, "rgba(239, 68, 68, 0.50)");
+          gradient.addColorStop(0.48, "rgba(249, 115, 22, 0.34)");
+          gradient.addColorStop(0.72, "rgba(250, 204, 21, 0.20)");
+          gradient.addColorStop(1, "rgba(250, 204, 21, 0)");
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(pixel.x, pixel.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        if (heatLayer && typeof heatLayer.reFresh === "function") {
+          heatLayer.reFresh();
+        }
+      }
+
+      function toggleHeatmap(show) {
+        if (!show) {
+          clearHeatmap();
+          setMessage("已关闭热力图。", false);
+          return;
+        }
+        drawHeatmap();
+        setMessage("已打开热力图。", false);
+      }
+
+      async function ensureMap() {
+        if (map) return map;
+
+        await loadAmapSdk();
+        const mapEl = document.getElementById("map");
+        setMapStatus(
+          `SDK 已加载，开始初始化地图。容器尺寸 ${mapEl.clientWidth} x ${mapEl.clientHeight}`
+        );
+
+        map = new window.AMap.Map("map", {
+          zoom: 11,
+          center: TIANANMEN_CENTER,
+          viewMode: "2D",
+          resizeEnable: true,
+        });
+
+        baseTileLayer = new window.AMap.TileLayer({
+          zIndex: 1,
+          opacity: 1,
+          tileSize: 256,
+          getTileUrl(x, y, z) {
+            return buildAmapTileUrl(x, y, z);
+          },
+        });
+        map.setLayers([baseTileLayer]);
+        ensureHeatLayer();
+
+        map.on("complete", () => {
+          const center = getSafeCenter();
+          setMapStatus(
+            `地图初始化完成。中心 ${center.lng.toFixed(4)}, ${center.lat.toFixed(4)}`
+          );
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          drawHeatmap();
+        });
+
+        map.on("error", (error) => {
+          console.error("amap_error", error);
+          setMapStatus("地图底图加载异常，请检查高德 Key 或网络环境。");
+        });
+
+        map.on("zoomend", () => {
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          drawHeatmap();
+        });
+        map.on("moveend", () => {
+          refreshMarkerVisibility();
+          drawHeatmap();
+        });
+
+        window.addEventListener("resize", () => {
+          if (!map) return;
+          map.resize();
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          drawHeatmap();
+        });
+
+        window.setTimeout(() => {
+          if (!map) return;
+          map.resize();
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          drawHeatmap();
+        }, 100);
+
+        return map;
+      }
+
+      function clearMap() {
+        if (!map) return;
+        if (markers.length) map.remove(markers);
+        markers = [];
+        markerByIndex = [];
+        activeMarker = null;
+        expandedMarkerIndexes = new Set();
+        showAllMarkers = false;
+      }
+
+      function buildMarkerContent(rank, active = false) {
+        const bg = active ? "#0f766e" : "#1677ff";
+        const shadow = active
+          ? "0 0 0 6px rgba(15,118,110,0.16)"
+          : "0 0 0 4px rgba(22,119,255,0.16)";
+
+        return `
+          <div style="
+            width:34px;
+            height:34px;
+            border-radius:999px;
+            background:${bg};
+            color:#fff;
+            font-weight:800;
+            font-size:13px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            border:3px solid #fff;
+            box-shadow:${shadow};
+          ">${rank}</div>
+        `;
+      }
+
+      function setMarkerActive(index) {
+        if (activeMarker) {
+          activeMarker.setContent(buildMarkerContent(activeMarker.__rank, false));
+          activeMarker.setzIndex(100);
+          activeMarker.setLabel(null);
+        }
+
+        activeMarker = markerByIndex[index] || null;
+        if (!activeMarker) {
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          return;
+        }
+
+        activeMarker.setContent(buildMarkerContent(activeMarker.__rank, true));
+        activeMarker.setzIndex(200);
+        activeMarker.show();
+        activeMarker.__visible = true;
+        activeMarker.setLabel(
+          buildLabelConfig(activeMarker.__index || 0, activeMarker.__rank, activeMarker.__name)
+        );
+      }
+
+      function openInAmap(candidate) {
+        const name = encodeURIComponent(candidate.name || `候选点 ${candidate.rank}`);
+        const pos = `${candidate.location.lng},${candidate.location.lat}`;
+        window.open(`https://uri.amap.com/marker?position=${pos}&name=${name}`, "_blank");
+      }
+
+      function addCandidateMarker(candidate, index) {
+        const marker = new window.AMap.Marker({
+          position: [candidate.location.lng, candidate.location.lat],
+          offset: new window.AMap.Pixel(-17, -17),
+          content: buildMarkerContent(candidate.rank, false),
+          title: candidate.name || `候选点 ${candidate.rank}`,
+          anchor: "center",
+          zIndex: 100,
+        });
+
+        marker.__rank = candidate.rank;
+        marker.__name = candidate.name || "候选点";
+        marker.__index = index;
+        marker.__visible = true;
+
+        marker.on("click", () => focusCandidate(index));
+        marker.on("mouseover", () => {
+          if (activeMarker === marker || !marker.__visible) return;
+          marker.setLabel(buildLabelConfig(index, candidate.rank, candidate.name || "候选点"));
+        });
+        marker.on("mouseout", () => {
+          if (activeMarker === marker || !marker.__visible) return;
+          refreshMarkerLabels();
+        });
+
+        map.add(marker);
+        markers.push(marker);
+        markerByIndex[index] = marker;
+      }
+
+      function highlightCard(index) {
+        document.querySelectorAll(".card").forEach((card) => {
+          const active = Number(card.dataset.index) === index;
+          card.classList.toggle("active", active);
+          if (active) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      }
+
+      function renderCandidateDetail(index) {
+        const body = document.getElementById("candidate-detail-body");
+        const candidates = (currentData && currentData.candidates) || [];
+        const candidate = candidates[index];
+        if (!candidate) {
+          body.className = "detail-empty";
+          body.textContent = "点击左侧卡片或地图标注后，在这里看这个点合并前的备选位置。";
+          return;
+        }
+
+        const merged = candidate.merged_candidates || [];
+        if (!merged.length) {
+          body.className = "detail-empty";
+          body.textContent = `第 ${candidate.rank} 个候选点没有额外合并进来的备选位置。`;
+          return;
+        }
+
+        body.className = "merged-list";
+        body.innerHTML = merged
+          .map((item, mergedIndex) => {
+            const title = escapeHtml(item.name || `备选位置 ${mergedIndex + 1}`);
+            const meta = [
+              escapeHtml(item.district || "未识别区"),
+              escapeHtml(item.scene_type || "待判定"),
+              item.score == null ? "综合得分 -" : `综合得分 ${item.score}`,
+            ].join(" | ");
+            return `
+              <div class="merged-item">
+                <div class="merged-title">${mergedIndex + 1}. ${title}</div>
+                <div class="merged-meta">${meta}</div>
+                <div class="merged-meta">${escapeHtml(item.address || "暂无地址")}</div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      function focusAllCandidates() {
+        if (!map || !markers.length) return;
+        highlightCard(-1);
+        renderCandidateDetail(-1);
+        showAllMarkers = true;
+        expandedMarkerIndexes = new Set();
+        setMarkerActive(-1);
+        map.setCenter(TIANANMEN_CENTER);
+        map.setFitView(markers, false, [70, 70, 70, 70]);
+        window.setTimeout(() => {
+          refreshMarkerVisibility();
+          refreshMarkerLabels();
+          drawHeatmap();
+          const zoom = getSafeZoom();
+          setMapStatus(`当前显示全部 ${markers.length} 个候选点，缩放 ${zoom.toFixed(0)}。`);
+        }, 80);
+      }
+
+      function focusCandidate(index) {
+        if (!map || !currentData || !currentData.candidates || !currentData.candidates[index]) {
+          return;
+        }
+        const candidate = currentData.candidates[index];
+        if (activeMarker) {
+          activeMarker.setContent(buildMarkerContent(activeMarker.__rank, false));
+          activeMarker.setzIndex(100);
+          activeMarker.setLabel(null);
+          activeMarker = null;
+        }
+        showAllMarkers = false;
+        highlightCard(index);
+        renderCandidateDetail(index);
+        updateExpandedMarkerIndexes(index);
+        refreshMarkerVisibility();
+        setMarkerActive(index);
+        map.setZoomAndCenter(16, [candidate.location.lng, candidate.location.lat], false, 260);
+        setMapStatus(
+          `已定位到第 ${candidate.rank} 个候选点：${candidate.name || candidate.address || "未命名点位"}`
+        );
+        window.setTimeout(drawHeatmap, 80);
+      }
+
+      function renderList(data) {
+        const list = document.getElementById("list");
+        const candidates = data.candidates || [];
+        list.innerHTML = "";
+
+        candidates.forEach((candidate, index) => {
+          const card = document.createElement("div");
+          card.className = "card";
+          card.dataset.index = index;
+
+          const row = document.createElement("div");
+          row.className = "row";
+
+          const left = document.createElement("div");
+          left.style.display = "flex";
+          left.style.alignItems = "center";
+          left.style.gap = "10px";
+
+          const rank = document.createElement("div");
+          rank.className = "rank";
+          rank.textContent = candidate.rank;
+
+          const titleWrap = document.createElement("div");
+          const title = document.createElement("div");
+          title.className = "title";
+          title.textContent = candidate.name || `候选点 ${candidate.rank}`;
+
+          const sub = document.createElement("div");
+          sub.className = "sub";
+          sub.textContent = `${candidate.district || "未识别区"} | ${candidate.scene_type || "待判定"} | 综合得分 ${candidate.score ?? "-"}`;
+
+          titleWrap.appendChild(title);
+          titleWrap.appendChild(sub);
+          left.appendChild(rank);
+          left.appendChild(titleWrap);
+
+          const openBtn = document.createElement("button");
+          openBtn.className = "open-btn";
+          openBtn.textContent = "高德地图";
+          openBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            openInAmap(candidate);
+          });
+
+          row.appendChild(left);
+          row.appendChild(openBtn);
+
+          const addr = document.createElement("div");
+          addr.className = "addr";
+          addr.textContent = candidate.address || "暂无地址";
+
+          const tags = document.createElement("div");
+          tags.className = "tags";
+          [
+            `行政区 ${candidate.district || "未识别"}`,
+            `办公 ${candidate.office_count ?? 0}`,
+            `饮品 ${candidate.drink_count ?? 0}`,
+            `餐饮 ${candidate.food_count ?? 0}`,
+            `娱乐 ${candidate.leisure_count ?? 0}`,
+            `业态数 ${candidate.category_count ?? 0}`,
+            `热点分 ${candidate.hot_score ?? 0}`,
+            `合并 ${Math.max(0, (candidate.merged_count || 1) - 1)}`,
+          ].forEach((text) => {
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = text;
+            tags.appendChild(tag);
+          });
+
+          card.appendChild(row);
+          card.appendChild(addr);
+          card.appendChild(tags);
+          card.addEventListener("click", () => focusCandidate(index));
+          list.appendChild(card);
+        });
+      }
+
+      async function renderMap(data) {
+        await ensureMap();
+        map.resize();
+        clearMap();
+        clearHeatmap();
+        renderCandidateDetail(-1);
+
+        (data.candidates || []).forEach((candidate, index) => {
+          if (!candidate.location) return;
+          addCandidateMarker(candidate, index);
+        });
+
+        if (markers.length) {
+          map.setFitView(markers, false, [70, 70, 70, 70]);
+          window.setTimeout(() => {
+            refreshMarkerVisibility();
+            refreshMarkerLabels();
+            drawHeatmap();
+            const zoom = getSafeZoom();
+            setMapStatus(`地图已渲染 ${markers.length} 个候选点，缩放 ${zoom.toFixed(0)}。`);
+          }, 80);
+        } else {
+          map.setZoomAndCenter(11, TIANANMEN_CENTER);
+          setMapStatus("没有可显示的候选点。");
+        }
+      }
+
+      async function loadCandidates(refresh = false) {
+        const authToken = getAuthToken();
+        if (!authToken) {
+          setMessage("请先在首页登录，再打开这个页面。");
+          return;
+        }
+
+        try {
+          setMessage("", false);
+          setMapStatus(
+            refresh
+              ? "正在重新计算北京候选点，并写入 sqlite..."
+              : "正在从 sqlite 读取北京候选点缓存..."
+          );
+
+          const resp = await fetch(
+            `${API_BASE}/mengniu/beijing_candidates?refresh=${refresh ? "true" : "false"}`,
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
+
+          if (!resp.ok) {
+            const text = await resp.text();
+            setMessage(`加载失败：${text}`);
+            if (resp.status === 401) {
+              setMapStatus("登录已失效，请先回首页重新登录。");
+            }
+            return;
+          }
+
+          const data = await resp.json();
+          currentData = data;
+          renderList(data);
+          await renderMap(data);
+          const sourceLabel = data.source === "cache" ? "来自 sqlite 缓存" : "刚重新计算";
+          setMessage(`已拿到 ${(data.candidates || []).length} 个北京候选点，${sourceLabel}。`, false);
+        } catch (error) {
+          console.error("mengniu_page_failed", error);
+          setMessage(`加载失败：${error && error.message ? error.message : String(error)}`);
+          setMapStatus("地图加载失败。");
+        }
+      }
+
+      document.querySelectorAll('[data-role="toggle-filters"]').forEach((btn) => {
+        btn.addEventListener("click", () => toggleFilters());
+      });
+      if ((localStorage.getItem("mengniuFiltersCollapsed") || "") === "1") {
+        document.body.classList.add("filters-collapsed");
+      }
+      applyFilterCollapseUI();
+      loadCandidates(false);
+    </script>
+  </body>
+</html>

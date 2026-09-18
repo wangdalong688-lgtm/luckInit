@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>北京写字楼地图</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #eef4f1;
+        --panel: rgba(255, 255, 255, 0.96);
+        --line: #d7e1db;
+        --text: #173127;
+        --muted: #5c7469;
+        --brand: #0f766e;
+        --brand-soft: #e6fffa;
+        --accent: #b45309;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        background:
+          radial-gradient(circle at top left, #fef3c7 0, transparent 24%),
+          radial-gradient(circle at bottom right, #dcfce7 0, transparent 28%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(23, 49, 39, 0.08);
+        background: rgba(250, 252, 251, 0.94);
+        backdrop-filter: blur(12px);
+      }
+
+      #topbar h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+      }
+
+      .sub {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      select,
+      input {
+        border: 1px solid #cbd5cf;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 14px;
+        background: #fff;
+        color: var(--text);
+      }
+
+      button {
+        border: 1px solid var(--brand);
+        background: var(--brand);
+        color: #fff;
+        border-radius: 10px;
+        padding: 8px 14px;
+        min-height: 42px;
+        font-size: 14px;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .button-secondary {
+        border-color: #cbd5cf;
+        background: #fff;
+        color: var(--text);
+      }
+
+      #message {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      body.filters-collapsed #topbar {
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      body.filters-collapsed #topbar > :not([data-persistent="1"]) {
+        display: none !important;
+      }
+      body.filters-collapsed #map-shell {
+        min-height: 72vh;
+      }
+      body.filters-collapsed .summary-panel {
+        display: none;
+      }
+
+      #auth-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+        flex-wrap: wrap;
+      }
+
+      #auth-controls input {
+        width: 118px;
+      }
+
+      #auth-status {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #login-fields {
+        display: none !important;
+      }
+
+      #layout {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+
+      #sidebar {
+        width: 430px;
+        max-width: 100%;
+        overflow-y: auto;
+        padding: 14px;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+      }
+
+      #map-shell {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        min-height: 60vh;
+      }
+      .floating-toggle {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 16;
+        box-shadow: 0 8px 20px rgba(15, 118, 110, 0.16);
+        display: none;
+      }
+      .floating-detail {
+        position: absolute;
+        right: 12px;
+        top: 64px;
+        z-index: 16;
+        box-shadow: 0 8px 20px rgba(15, 118, 110, 0.16);
+        display: none;
+      }
+      .toggle-inline {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .toggle-inline input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
+
+      #map {
+        width: 100%;
+        height: 100%;
+      }
+      #heatmap-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+        opacity: 0.88;
+      }
+
+      #map-status {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        max-width: min(460px, calc(100% - 24px));
+        padding: 9px 11px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(23, 49, 39, 0.08);
+        font-size: 12px;
+        color: #4f645b;
+        line-height: 1.6;
+      }
+
+      .map-legend {
+        position: absolute;
+        top: 86px;
+        left: 12px;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        max-width: min(460px, calc(100% - 24px));
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(23, 49, 39, 0.08);
+      }
+
+      .legend-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #35564b;
+      }
+
+      .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        border: 2px solid transparent;
+      }
+
+      .panel {
+        margin-bottom: 14px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.88);
+      }
+
+      .panel h2,
+      .panel h3 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .summary-item {
+        padding: 10px;
+        border-radius: 12px;
+        background: #f8faf9;
+        border: 1px solid #e2ebe6;
+      }
+
+      .summary-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .summary-value {
+        margin-top: 4px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .office-card {
+        margin-bottom: 10px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid #d8e3dc;
+        background: #fff;
+        cursor: pointer;
+        transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+      }
+
+      .office-card:hover {
+        transform: translateY(-1px);
+        border-color: #7dd3c7;
+        box-shadow: 0 6px 18px rgba(15, 118, 110, 0.08);
+      }
+
+      .office-card.active {
+        border-color: var(--brand);
+        background: var(--brand-soft);
+      }
+
+      .office-title {
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1.5;
+      }
+
+      .office-meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .tag {
+        display: inline-block;
+        margin-right: 6px;
+        margin-top: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #eff6f3;
+        border: 1px solid #d6e5de;
+        font-size: 11px;
+        color: #35564b;
+      }
+
+      .tag-high {
+        background: #ecfdf5;
+        border-color: #a7f3d0;
+        color: #166534;
+      }
+
+      .tag-medium {
+        background: #fffbeb;
+        border-color: #fcd34d;
+        color: #92400e;
+      }
+
+      .tag-low {
+        background: #fff1f2;
+        border-color: #fda4af;
+        color: #9f1239;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        padding: 9px 10px;
+        border-radius: 12px;
+        background: #f8faf9;
+        border: 1px solid #e2ebe6;
+      }
+
+      .metric-name {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .metric-value {
+        margin-top: 3px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .empty {
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+      .detail-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(15, 23, 42, 0.48);
+        backdrop-filter: blur(6px);
+      }
+      .detail-modal.open {
+        display: flex;
+      }
+      .detail-modal-card {
+        width: min(920px, calc(100vw - 24px));
+        max-height: min(88vh, 980px);
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(23, 49, 39, 0.08);
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 20px 54px rgba(15, 23, 42, 0.18);
+      }
+      .detail-modal-head {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(250, 252, 251, 0.96);
+        backdrop-filter: blur(10px);
+      }
+      .detail-modal-title {
+        font-size: 16px;
+        font-weight: 800;
+      }
+      .detail-modal-body {
+        padding: 12px;
+      }
+      .detail-modal-body .office-title {
+        font-size: 16px;
+        line-height: 1.35;
+      }
+      .detail-modal-body .office-meta {
+        margin-top: 4px;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .detail-modal-body .metric-grid {
+        gap: 6px;
+      }
+      .detail-modal-body .metric {
+        padding: 7px 8px;
+        border-radius: 10px;
+      }
+      .detail-modal-body .metric-name {
+        font-size: 11px;
+      }
+      .detail-modal-body .metric-value {
+        margin-top: 2px;
+        font-size: 13px;
+      }
+
+      .amap-info-content {
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 900px) {
+        #topbar {
+          padding: 10px;
+          gap: 8px;
+        }
+
+        #topbar > * {
+          flex: 1 1 100%;
+        }
+
+        #topbar > div:first-child {
+          flex-basis: 100%;
+        }
+
+        #topbar h1 {
+          font-size: 20px;
+        }
+
+        select,
+        input,
+        button {
+          min-height: 44px;
+          font-size: 16px;
+        }
+
+        #message {
+          order: 10;
+        }
+
+        #layout {
+          flex-direction: column;
+        }
+
+        #sidebar {
+          width: 100%;
+          max-height: 40vh;
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+          padding: 10px;
+        }
+
+        #map-shell {
+          min-height: 60vh;
+        }
+
+        .summary-grid,
+        .metric-grid {
+          grid-template-columns: 1fr;
+        }
+        .floating-detail {
+          top: 62px;
+          display: inline-flex;
+        }
+        .floating-toggle {
+          display: inline-flex;
+        }
+        .detail-modal {
+          padding: 10px;
+        }
+        .detail-modal-card {
+          width: 100%;
+          max-height: 92vh;
+          border-radius: 16px;
+        }
+        .detail-modal-head,
+        .detail-modal-body {
+          padding: 12px;
+        }
+      }
+    </style>
+    <script>
+      const AMAP_KEY = "f4ca682a3333034a1ee832e6f939ed8e";
+      const AMAP_SECURITY_JS_CODE = "f4ca682a3333034a1ee832e6f939ed8e";
+      window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_JS_CODE };
+    </script>
+  </head>
+  <body>
+    <div id="topbar">
+      <button type="button" class="button-secondary" data-persistent="1" onclick="window.location.href='/'">首页</button>
+      <div data-persistent="1">
+        <h1>北京写字楼地图</h1>
+        <div class="sub">按区域查看楼宇点位，点击标记或左侧卡片查看完整参数。</div>
+      </div>
+      <label class="toggle-inline">
+        <input id="heatmap-toggle" type="checkbox" checked />
+        热力图
+      </label>
+      <select id="district-select"></select>
+      <input id="search-input" placeholder="搜索楼宇名称" />
+      <button id="load-btn">加载区域</button>
+      <div id="auth-controls">
+        <span id="login-fields" style="display: inline-flex; gap: 8px; align-items: center;">
+          <input id="username-input" placeholder="用户名" autocomplete="username" />
+          <input id="password-input" placeholder="密码" type="password" autocomplete="current-password" />
+          <button id="login-btn" type="button">登录</button>
+        </span>
+        <button id="logout-btn" type="button" class="button-secondary" style="display: none;">退出</button>
+        <span id="auth-status">未登录</span>
+      </div>
+      <span id="message"></span>
+    </div>
+
+    <div id="layout">
+      <div id="sidebar">
+        <div class="panel summary-panel">
+          <h2>区域概览</h2>
+          <div id="summary-grid" class="summary-grid"></div>
+        </div>
+
+        <div class="panel">
+          <h3>楼宇参数</h3>
+          <div id="detail-panel" class="empty">选中一个楼宇后，这里会显示它的指标参数和坐标。</div>
+        </div>
+
+        <div class="panel">
+          <h3>楼宇列表</h3>
+          <div id="office-list" class="empty">正在加载数据...</div>
+        </div>
+      </div>
+
+      <div id="map-shell">
+        <button type="button" class="floating-detail button-secondary" id="open-detail-modal-btn">展开楼宇参数</button>
+        <button type="button" class="floating-toggle button-secondary" data-role="toggle-filters">收起筛选</button>
+        <div id="map"></div>
+        <canvas id="heatmap-canvas"></canvas>
+        <div id="map-status">地图准备中...</div>
+        <div class="map-legend">
+          <span class="legend-chip">
+            <span class="legend-dot" style="background:#f59e0b;border-color:#b45309;"></span>
+            商场
+          </span>
+          <span class="legend-chip">
+            <span class="legend-dot" style="background:#0f766e;border-color:#115e59;"></span>
+            写字楼
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div id="detail-modal" class="detail-modal" aria-hidden="true">
+      <div class="detail-modal-card">
+        <div class="detail-modal-head">
+          <div class="detail-modal-title">楼宇参数详情</div>
+          <button type="button" class="button-secondary" id="close-detail-modal-btn">关闭</button>
+        </div>
+        <div id="detail-modal-body" class="detail-modal-body"></div>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        map: null,
+        infoWindow: null,
+        markers: [],
+        markerById: new Map(),
+        allItems: [],
+        filteredItems: [],
+        selectedId: null,
+        baseTileLayer: null,
+        heatmapItems: [],
+        heatmapMeta: null,
+      };
+
+      let amapProxyPatched = false;
+      const PAGE_PARAMS = new URLSearchParams(window.location.search);
+
+      function resolveApiBase() {
+        if (window.location.protocol === "file:") return "http://127.0.0.1:8008";
+        return window.location.origin.replace(/\/+$/, "");
+      }
+
+      const API_BASE = resolveApiBase();
+      let authToken = localStorage.getItem("authToken") || "";
+
+      function apiUrl(path) {
+        return `${API_BASE}${path}`;
+      }
+
+      function applyFilterCollapseUI() {
+        const collapsed = document.body.classList.contains("filters-collapsed");
+        document.querySelectorAll('[data-role="toggle-filters"]').forEach((btn) => {
+          btn.textContent = collapsed ? "展开筛选" : "收起筛选";
+        });
+      }
+
+      function toggleFilters(force) {
+        const next =
+          typeof force === "boolean"
+            ? force
+            : !document.body.classList.contains("filters-collapsed");
+        document.body.classList.toggle("filters-collapsed", next);
+        try {
+          localStorage.setItem("officeMapFiltersCollapsed", next ? "1" : "0");
+        } catch (error) {}
+        applyFilterCollapseUI();
+        if (state.map && typeof state.map.resize === "function") {
+          setTimeout(() => state.map.resize(), 60);
+        }
+      }
+
+      function redirectToLogin() {
+        const next = `${window.location.pathname}${window.location.search || ""}`;
+        window.location.replace(`/?next=${encodeURIComponent(next)}`);
+      }
+
+      function getAuthToken() {
+        return authToken || localStorage.getItem("authToken") || "";
+      }
+
+      function setAuthUI(loggedIn, username = "") {
+        document.getElementById("logout-btn").style.display = loggedIn
+          ? "inline-flex"
+          : "none";
+        document.getElementById("load-btn").disabled = !loggedIn;
+        document.getElementById("district-select").disabled = !loggedIn;
+        document.getElementById("search-input").disabled = !loggedIn;
+        document.getElementById("auth-status").textContent = loggedIn
+          ? `已登录：${username}`
+          : "未登录";
+      }
+
+      async function checkAuth() {
+        authToken = getAuthToken();
+        if (!authToken) {
+          redirectToLogin();
+          return false;
+        }
+        try {
+          const resp = await fetch(apiUrl("/auth/me"), {
+            headers: { Authorization: `Bearer ${authToken}` },
+            cache: "no-store",
+          });
+          if (!resp.ok) {
+            authToken = "";
+            localStorage.removeItem("authToken");
+            redirectToLogin();
+            return false;
+          }
+          const data = await resp.json();
+          setAuthUI(true, data.username || "");
+          setMessage("");
+          return true;
+        } catch (error) {
+          redirectToLogin();
+          return false;
+        }
+      }
+
+      async function logout() {
+        const token = getAuthToken();
+        if (token) {
+          try {
+            await fetch(apiUrl("/auth/logout"), {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          } catch (error) {
+            console.error("logout failed", error);
+          }
+        }
+        authToken = "";
+        localStorage.removeItem("authToken");
+        setAuthUI(false);
+        state.allItems = [];
+        state.filteredItems = [];
+        state.selectedId = null;
+        state.heatmapItems = [];
+        state.heatmapMeta = null;
+        renderSummary([]);
+        renderList([]);
+        renderDetail(null);
+        renderMarkers([]);
+        clearHeatmap();
+        redirectToLogin();
+      }
+
+      function getInitialFocusName() {
+        return (PAGE_PARAMS.get("focus") || "").trim();
+      }
+
+      function getInitialDistrict() {
+        return (PAGE_PARAMS.get("district") || "").trim();
+      }
+
+      function formatValue(value) {
+        if (value === null || value === undefined || value === "") return "-";
+        if (typeof value === "number") {
+          if (Number.isInteger(value)) return String(value);
+          return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+        }
+        return String(value);
+      }
+
+      function formatPercent(value) {
+        if (value === null || value === undefined || value === "") return "-";
+        const num = Number(value);
+        if (!Number.isFinite(num)) return formatValue(value);
+        return `${(num * 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}%`;
+      }
+
+      function getMapLngLat(item) {
+        const gcjLng = Number(item.gcj02_longitude);
+        const gcjLat = Number(item.gcj02_latitude);
+        if (Number.isFinite(gcjLng) && Number.isFinite(gcjLat)) {
+          return [gcjLng, gcjLat];
+        }
+        const wgsLng = Number(item.longitude);
+        const wgsLat = Number(item.latitude);
+        if (Number.isFinite(wgsLng) && Number.isFinite(wgsLat)) {
+          return [wgsLng, wgsLat];
+        }
+        return null;
+      }
+
+      function setMessage(text, isError = false) {
+        const el = document.getElementById("message");
+        el.textContent = text || "";
+        el.style.color = isError ? "#b91c1c" : "#5c7469";
+      }
+
+      function setMapStatus(text) {
+        document.getElementById("map-status").textContent = text || "";
+      }
+
+      function isHeatmapEnabled() {
+        const toggle = document.getElementById("heatmap-toggle");
+        return !!(toggle && toggle.checked);
+      }
+
+      function getSafeZoom(defaultZoom = 11) {
+        if (!state.map || typeof state.map.getZoom !== "function") return defaultZoom;
+        const zoom = Number(state.map.getZoom());
+        return Number.isFinite(zoom) ? zoom : defaultZoom;
+      }
+
+      function resizeHeatCanvas() {
+        const shell = document.getElementById("map-shell");
+        const canvas = document.getElementById("heatmap-canvas");
+        const width = shell.clientWidth;
+        const height = shell.clientHeight;
+        if (!width || !height) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function clearHeatmap() {
+        const canvas = document.getElementById("heatmap-canvas");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function drawHeatmapForItems(items) {
+        if (!state.map || !items?.length || !isHeatmapEnabled()) {
+          clearHeatmap();
+          return;
+        }
+
+        resizeHeatCanvas();
+        const canvas = document.getElementById("heatmap-canvas");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.globalCompositeOperation = "lighter";
+
+        const weights = items
+          .map((item) =>
+            Number(item.weight) ||
+            (Number(item.work_population) || 0) / 1200 +
+              (Number(item.daily_delivery_orders) || 0) / 8
+          )
+          .filter((value) => Number.isFinite(value) && value > 0);
+        const maxWeight = weights.length ? Math.max(...weights) : 1;
+        const minWeight = weights.length ? Math.min(...weights) : 0;
+        const weightSpan = Math.max(1, maxWeight - minWeight);
+
+        items.forEach((item) => {
+          const location = item?.location_gcj02 || item?.location || null;
+          const lnglat =
+            location &&
+            Number.isFinite(Number(location.lng)) &&
+            Number.isFinite(Number(location.lat))
+              ? [Number(location.lng), Number(location.lat)]
+              : getMapLngLat(item);
+          if (!lnglat) return;
+          const pixel = state.map.lngLatToContainer(lnglat);
+          if (!pixel) return;
+
+          const weight =
+            Number(item.weight) ||
+            (Number(item.work_population) || 0) / 1200 +
+              (Number(item.daily_delivery_orders) || 0) / 8;
+          const normalized = (weight - minWeight) / weightSpan;
+          const intensity = Math.max(0.3, Math.min(1, 0.45 + normalized * 0.8));
+          const poiCount = Number(item.poi_count) || 1;
+          const radius = Math.max(
+            30,
+            Math.min(132, getSafeZoom() * 5.2 + Math.min(34, poiCount * 3.2))
+          );
+          const gradient = ctx.createRadialGradient(
+            pixel.x,
+            pixel.y,
+            0,
+            pixel.x,
+            pixel.y,
+            radius
+          );
+          gradient.addColorStop(0, `rgba(255, 245, 157, ${0.74 * intensity})`);
+          gradient.addColorStop(0.16, `rgba(255, 193, 7, ${0.62 * intensity})`);
+          gradient.addColorStop(0.36, `rgba(255, 109, 0, ${0.5 * intensity})`);
+          gradient.addColorStop(0.6, `rgba(229, 57, 53, ${0.34 * intensity})`);
+          gradient.addColorStop(0.82, `rgba(84, 24, 14, ${0.14 * intensity})`);
+          gradient.addColorStop(1, "rgba(20, 10, 8, 0)");
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(pixel.x, pixel.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalCompositeOperation = "source-over";
+      }
+
+      function redrawHeatmap() {
+        drawHeatmapForItems(state.heatmapItems);
+      }
+
+      function confidenceClass(value) {
+        if (value === "high") return "tag-high";
+        if (value === "medium") return "tag-medium";
+        return "tag-low";
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function calcRecommendation(item) {
+        const work = Number(item.work_population) || 0;
+        const delivery = Number(item.daily_delivery_orders) || 0;
+        const stores = Number(item.opened_store_count) || 0;
+        const confidenceWeight =
+          item.geo_confidence === "high" ? 1 :
+          item.geo_confidence === "medium" ? 0.82 : 0.62;
+
+        const workScore = clamp(work / 8000, 0, 1);
+        const deliveryScore = clamp(delivery / 30, 0, 1);
+        const storePenalty = stores >= 2 ? 0.18 : stores === 1 ? 0.08 : 0;
+
+        const score =
+          (workScore * 0.5 + deliveryScore * 0.4 + confidenceWeight * 0.1) - storePenalty;
+
+        const stars = clamp(Math.round(score * 4) + 1, 1, 5);
+        return {
+          stars,
+          text: "\u2605".repeat(stars) + "\u2606".repeat(5 - stars),
+          color: "#ffffff",
+          background: "#c81e1e",
+          border: "#991b1b",
+          starColor: "#b91c1c",
+        };
+      }
+
+      function getLocationCategoryStyle(item) {
+        const rawType = `${item?.location_type || ""} ${item?.location_subtype || ""}`.toLowerCase();
+        if (
+          rawType.includes("商场") ||
+          rawType.includes("百货") ||
+          rawType.includes("购物") ||
+          rawType.includes("mall") ||
+          rawType.includes("department_store")
+        ) {
+          return {
+            key: "mall",
+            label: "商场",
+            color: "#ffffff",
+            background: "#f59e0b",
+            border: "#b45309",
+            softBackground: "#fff7e6",
+            softBorder: "#f7c56a",
+            softColor: "#92400e",
+          };
+        }
+        if (
+          rawType.includes("写字楼") ||
+          rawType.includes("办公") ||
+          rawType.includes("商务") ||
+          rawType.includes("office") ||
+          rawType.includes("business")
+        ) {
+          return {
+            key: "office",
+            label: "写字楼",
+            color: "#ffffff",
+            background: "#0f766e",
+            border: "#115e59",
+            softBackground: "#e7f8f5",
+            softBorder: "#87d7cf",
+            softColor: "#0f5f58",
+          };
+        }
+        return {
+          key: "other",
+          label: "其他",
+          color: "#ffffff",
+          background: "#64748b",
+          border: "#475569",
+          softBackground: "#eef2f7",
+          softBorder: "#cbd5e1",
+          softColor: "#334155",
+        };
+      }
+
+      function offsetLngLat(lnglat, index) {
+        const angle = (index % 8) * (Math.PI / 4);
+        const ring = Math.floor(index / 8) + 1;
+        const dx = Math.cos(angle) * ring * 0.00018;
+        const dy = Math.sin(angle) * ring * 0.00014;
+        return [lnglat[0] + dx, lnglat[1] + dy];
+      }
+
+      function buildOverlapAdjustedPositions(items) {
+        const buckets = new Map();
+        const positions = new Map();
+        items.forEach((item) => {
+          const lnglat = getMapLngLat(item);
+          if (!lnglat) return;
+          const key = `${lnglat[0].toFixed(5)}:${lnglat[1].toFixed(5)}`;
+          const bucket = buckets.get(key) || [];
+          bucket.push({ id: item.id, lnglat });
+          buckets.set(key, bucket);
+        });
+        buckets.forEach((bucket) => {
+          if (bucket.length === 1) {
+            positions.set(bucket[0].id, bucket[0].lnglat);
+            return;
+          }
+          bucket.forEach((entry, idx) => {
+            positions.set(entry.id, offsetLngLat(entry.lnglat, idx));
+          });
+        });
+        return positions;
+      }
+
+      function buildMetricHtml(item) {
+        const metrics = [
+          ["已开业门店数", item.opened_store_count],
+          ["工作人数", item.work_population],
+          ["工作-目标消费力", formatPercent(item.work_target_consumption)],
+          ["工作-目标行业占比", formatPercent(item.work_target_industry_ratio)],
+          ["日均客流", item.daily_traffic],
+          ["客流-目标消费力", formatPercent(item.traffic_target_consumption)],
+          ["客流-手机价格4000及以上占比", formatPercent(item.traffic_high_end_phone_ratio)],
+          ["师生规模", item.student_population],
+          ["师生规模-目标消费力", formatPercent(item.student_target_consumption)],
+          ["师生规模-女性占比", formatPercent(item.student_female_ratio)],
+          ["吞吐量", item.throughput],
+          ["目标消费力客流", item.target_consumption_traffic],
+          ["日均外送现制商品数", item.daily_delivery_orders],
+          ["经度(GCJ-02/高德)", item.gcj02_longitude],
+          ["纬度(GCJ-02/高德)", item.gcj02_latitude],
+          ["经度(WGS84)", item.longitude],
+          ["纬度(WGS84)", item.latitude],
+        ];
+        return metrics
+          .map(
+            ([label, value]) => `
+              <div class="metric">
+                <div class="metric-name">${label}</div>
+                <div class="metric-value">${formatValue(value)}</div>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function buildDetailHtml(item) {
+        const recommendation = calcRecommendation(item);
+        return `
+          <div class="office-title">${item.location_name}</div>
+          <div class="office-meta">
+            区域：${formatValue(item.district)}<br />
+            类型：${formatValue(item.location_type)} / ${formatValue(item.location_subtype)}<br />
+            推荐度：<span style="color:${recommendation.starColor};font-weight:800;letter-spacing:0.04em;">${recommendation.text}</span><br />
+            匹配置信度：${formatValue(item.geo_confidence)} (${formatValue(item.geo_score)})<br />
+            高德匹配：${formatValue(item.geo_match_address)}<br />
+            推荐状态：${formatValue(item.recommendation_status)}<br />
+            数据来源：${formatValue(item.source_file)} / ${formatValue(item.source_sheet)} / Excel 第${formatValue(item.excel_row_number)}行
+          </div>
+          <div class="metric-grid" style="margin-top: 10px;">
+            ${buildMetricHtml(item)}
+          </div>
+        `;
+      }
+
+      function getSelectedOffice() {
+        return state.filteredItems.find((item) => item.id === state.selectedId) ||
+          state.allItems.find((item) => item.id === state.selectedId) ||
+          null;
+      }
+
+      function syncDetailModal(item) {
+        const body = document.getElementById("detail-modal-body");
+        const trigger = document.getElementById("open-detail-modal-btn");
+        if (!item) {
+          body.innerHTML = `<div class="empty">先选中一个楼宇，再展开查看完整参数。</div>`;
+          trigger.disabled = true;
+          return;
+        }
+        trigger.disabled = false;
+        body.innerHTML = buildDetailHtml(item);
+      }
+
+      function openDetailModal() {
+        syncDetailModal(getSelectedOffice());
+        const modal = document.getElementById("detail-modal");
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+      }
+
+      function closeDetailModal() {
+        const modal = document.getElementById("detail-modal");
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+      }
+
+      function renderDetail(item) {
+        const container = document.getElementById("detail-panel");
+        if (!item) {
+          container.className = "empty";
+          container.textContent = "选中一个楼宇后，这里会显示它的指标参数、匹配地址和定位置信度。";
+          return;
+        }
+        container.className = "";
+        container.innerHTML = buildDetailHtml(item);
+        syncDetailModal(item);
+        return;
+        const recommendation = calcRecommendation(item);
+        container.innerHTML = `
+          <div class="office-title">${item.location_name}</div>
+          <div class="office-meta">
+            区域：${formatValue(item.district)}<br />
+            类型：${formatValue(item.location_type)} / ${formatValue(item.location_subtype)}<br />
+            推荐度：<span style="color:${recommendation.starColor};font-weight:800;letter-spacing:0.04em;">${recommendation.text}</span><br />
+            匹配置信度：${formatValue(item.geo_confidence)} (${formatValue(item.geo_score)})<br />
+            高德匹配：${formatValue(item.geo_match_address)}<br />
+            推荐状态：${formatValue(item.recommendation_status)}<br />
+            数据来源：${formatValue(item.source_file)} · ${formatValue(item.source_sheet)} · Excel 第 ${formatValue(item.excel_row_number)} 行
+          </div>
+          <div class="metric-grid" style="margin-top: 10px;">
+            ${buildMetricHtml(item)}
+          </div>
+        `;
+      }
+
+      function buildInfoWindowHtml(item) {
+        const recommendation = calcRecommendation(item);
+        return `
+          <div style="min-width: 220px;">
+            <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px;">${item.location_name}</div>
+            <div>区域：${formatValue(item.district)}</div>
+            <div>类型：${formatValue(item.location_subtype || item.location_type)}</div>
+            <div>推荐度：<span style="color:${recommendation.starColor};font-weight:800;letter-spacing:0.04em;">${recommendation.text}</span></div>
+            <div>匹配置信度：${formatValue(item.geo_confidence)} (${formatValue(item.geo_score)})</div>
+            <div>推荐状态：${formatValue(item.recommendation_status)}</div>
+            <div>已开业门店数：${formatValue(item.opened_store_count)}</div>
+            <div>工作人数：${formatValue(item.work_population)}</div>
+            <div>工作-目标消费力：${formatPercent(item.work_target_consumption)}</div>
+            <div>工作-目标行业占比：${formatPercent(item.work_target_industry_ratio)}</div>
+            <div>日均客流：${formatValue(item.daily_traffic)}</div>
+            <div>目标消费力客流：${formatValue(item.target_consumption_traffic)}</div>
+            <div>日均外送现制商品数：${formatValue(item.daily_delivery_orders)}</div>
+            <div>高德匹配：${formatValue(item.geo_match_address)}</div>
+          </div>
+        `;
+      }
+
+      function ensureInfoWindow() {
+        if (!state.infoWindow) {
+          state.infoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -26) });
+        }
+        return state.infoWindow;
+      }
+
+      function openMarkerBubble(item, marker) {
+        if (!item || !marker) return;
+        const infoWindow = ensureInfoWindow();
+        infoWindow.setContent(buildInfoWindowHtml(item));
+        infoWindow.open(state.map, marker.getPosition());
+      }
+
+      async function renderHeatmap(items) {
+        state.heatmapItems = Array.isArray(items) ? items.slice() : [];
+        redrawHeatmap();
+      }
+
+      async function fetchHeatmapData() {
+        const token = getAuthToken();
+        if (!token) {
+          throw new Error("璇峰厛鐧诲綍");
+        }
+        const district = document.getElementById("district-select").value;
+        const params = new URLSearchParams();
+        if (district) params.set("district", district);
+        const resp = await fetch(apiUrl(`/beijing_flow_heatmap?${params.toString()}`), {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            authToken = "";
+            localStorage.removeItem("authToken");
+            setAuthUI(false);
+            throw new Error("鐧诲綍宸插け鏁堬紝璇烽噸鏂扮櫥褰?");
+          }
+          throw new Error(`heatmap HTTP ${resp.status}`);
+        }
+        return resp.json();
+      }
+
+      async function loadHeatmapLayer() {
+        try {
+          const payload = await fetchHeatmapData();
+          state.heatmapMeta = payload || null;
+          await renderHeatmap((payload && payload.points) || []);
+          const count = Number(payload?.count) || 0;
+          if (count > 0) {
+            setMapStatus(
+              `褰撳墠灞曠ず ${state.filteredItems.length} 涓ゼ瀹囷紝鐑姏鍥句娇鐢?OSM/Overpass 寮€婧愪汉娴佷唬鐞嗙綉鏍?${count} 涓€?`
+            );
+          } else {
+            setMapStatus(
+              `褰撳墠灞曠ず ${state.filteredItems.length} 涓ゼ瀹囷紝浣嗗綋鍓嶅尯鍩熸殏鏃舵病鏈夊紑婧愮儹鍔涙暟鎹€?`
+            );
+          }
+        } catch (error) {
+          console.error("loadHeatmapLayer failed", error);
+          state.heatmapMeta = null;
+          await renderHeatmap([]);
+          setMessage(
+            `鐑姏鍥惧姞杞藉け璐ワ細${error && error.message ? error.message : String(error)}`,
+            true
+          );
+        }
+      }
+
+      function clearMarkers() {
+        state.markers.forEach((marker) => marker.setMap(null));
+        state.markers = [];
+        state.markerById.clear();
+      }
+
+      async function renderMarkers(items) {
+        clearMarkers();
+        if (!state.map) return;
+        await renderHeatmap(items);
+
+        const bounds = new AMap.Bounds();
+        const adjustedPositions = buildOverlapAdjustedPositions(items);
+        items.forEach((item) => {
+          const lnglat = adjustedPositions.get(item.id) || getMapLngLat(item);
+          if (!lnglat) return;
+          const recommendation = calcRecommendation(item);
+          const categoryStyle = getLocationCategoryStyle(item);
+          const marker = new AMap.Marker({
+            position: lnglat,
+            title: item.location_name,
+            offset: new AMap.Pixel(-13, -36),
+            zIndex: 20,
+            content: `
+              <div style="
+                min-width:34px;
+                height:26px;
+                padding:0 7px;
+                border-radius:999px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                font-size:12px;
+                font-weight:800;
+                color:${categoryStyle.color};
+                background:${categoryStyle.background};
+                border:2px solid ${categoryStyle.border};
+                box-shadow:0 6px 14px rgba(15,23,42,0.14);
+                letter-spacing:0.04em;
+                white-space:nowrap;
+              ">${recommendation.stars}</div>
+            `,
+            label: {
+              direction: "top",
+              content: `<div style="padding:3px 7px;border-radius:999px;background:${categoryStyle.background};border:1px solid ${categoryStyle.border};font-size:11px;font-weight:700;color:${categoryStyle.color};">${item.location_name}</div>`,
+            },
+          });
+          marker.on("click", () => selectOffice(item.id, true));
+          marker.on("mouseover", () => openMarkerBubble(item, marker));
+          marker.on("mouseout", () => {
+            if (state.selectedId !== item.id && state.infoWindow) {
+              state.infoWindow.close();
+            }
+          });
+          marker.setMap(state.map);
+          state.markers.push(marker);
+          state.markerById.set(item.id, marker);
+          bounds.extend(lnglat);
+        });
+
+        if (items.length) {
+          state.map.setFitView(state.markers, false, [50, 50, 50, 50], 14);
+        }
+      }
+
+      function buildAmapTileUrl(x, y, z) {
+        const rawUrl =
+          `https://webrd01.is.autonavi.com/appmaptile?` +
+          `lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`;
+        return proxiedAmapUrl(rawUrl, "asset");
+      }
+
+      function renderSummary(items) {
+        const grid = document.getElementById("summary-grid");
+        const totalWork = items.reduce((sum, item) => sum + (Number(item.work_population) || 0), 0);
+        const totalStores = items.reduce((sum, item) => sum + (Number(item.opened_store_count) || 0), 0);
+        const highConfidence = items.filter((item) => item.geo_confidence === "high").length;
+        const avgStars =
+          items.length
+            ? items.reduce((sum, item) => sum + calcRecommendation(item).stars, 0) / items.length
+            : 0;
+        const avgDelivery =
+          items.length
+            ? items.reduce((sum, item) => sum + (Number(item.daily_delivery_orders) || 0), 0) / items.length
+            : 0;
+        grid.innerHTML = `
+          <div class="summary-item">
+            <div class="summary-label">楼宇数量</div>
+            <div class="summary-value">${items.length}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">工作人数总和</div>
+            <div class="summary-value">${formatValue(totalWork)}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">已开业门店总数</div>
+            <div class="summary-value">${formatValue(totalStores)}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">平均外送现制商品数</div>
+            <div class="summary-value">${formatValue(avgDelivery)}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">高置信度点位</div>
+            <div class="summary-value">${highConfidence}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">平均推荐度</div>
+            <div class="summary-value">${"★".repeat(Math.round(avgStars || 0))}${"☆".repeat(5 - Math.round(avgStars || 0))}</div>
+          </div>
+        `;
+      }
+
+      function renderList(items) {
+        const container = document.getElementById("office-list");
+        if (!items.length) {
+          container.className = "empty";
+          container.textContent = "当前筛选条件下没有楼宇数据。";
+          return;
+        }
+
+        container.className = "";
+        container.innerHTML = items
+          .map(
+            (item) => {
+              const recommendation = calcRecommendation(item);
+              const categoryStyle = getLocationCategoryStyle(item);
+              return `
+              <div class="office-card ${state.selectedId === item.id ? "active" : ""}" data-id="${item.id}">
+                <div class="office-title">${item.location_name}</div>
+                <div class="office-meta">
+                  区域：${formatValue(item.district)}<br />
+                  类型：${formatValue(item.location_subtype || item.location_type)}<br />
+                  推荐度：<span style="color:${recommendation.starColor};font-weight:800;letter-spacing:0.04em;">${recommendation.text}</span><br />
+                  匹配：${formatValue(item.geo_confidence)} (${formatValue(item.geo_score)})<br />
+                  工作人数：${formatValue(item.work_population)}<br />
+                  日均外送现制商品数：${formatValue(item.daily_delivery_orders)}
+                </div>
+                <div>
+                  <span class="tag" style="background:${categoryStyle.softBackground};border-color:${categoryStyle.softBorder};color:${categoryStyle.softColor};">${categoryStyle.label}</span>
+                  <span class="tag ${confidenceClass(item.geo_confidence)}">匹配 ${formatValue(item.geo_confidence)}</span>
+                  <span class="tag" style="background:${recommendation.background};border-color:${recommendation.border};color:${recommendation.color};">推荐 ${recommendation.text}</span>
+                  <span class="tag">${formatValue(item.recommendation_status)}</span>
+                  <span class="tag">门店数 ${formatValue(item.opened_store_count)}</span>
+                </div>
+              </div>
+            `
+            }
+          )
+          .join("");
+
+        container.querySelectorAll(".office-card").forEach((card) => {
+          card.addEventListener("click", () => {
+            selectOffice(Number(card.dataset.id), true);
+          });
+        });
+      }
+
+      function applyClientFilter() {
+        const keyword = document.getElementById("search-input").value.trim().toLowerCase();
+        state.filteredItems = state.allItems.filter((item) => {
+          if (!keyword) return true;
+          return (item.location_name || "").toLowerCase().includes(keyword);
+        });
+        renderSummary(state.filteredItems);
+        renderList(state.filteredItems);
+        renderMarkers(state.filteredItems);
+        renderDetail(state.filteredItems.find((item) => item.id === state.selectedId) || null);
+        setMapStatus(`当前展示 ${state.filteredItems.length} 个楼宇点位。`);
+      }
+
+      function selectOffice(id, openInfoWindow = false) {
+        state.selectedId = id;
+        const item = state.filteredItems.find((entry) => entry.id === id) || state.allItems.find((entry) => entry.id === id);
+        renderList(state.filteredItems);
+        renderDetail(item || null);
+        if (!item) return;
+
+        const marker = state.markerById.get(id);
+        if (marker) {
+          state.map.setZoomAndCenter(15, marker.getPosition(), false, 280);
+          if (openInfoWindow) {
+            openMarkerBubble(item, marker);
+          }
+        }
+      }
+
+      async function fetchData() {
+        const token = getAuthToken();
+        if (!token) {
+          throw new Error("请先登录");
+        }
+        const district = document.getElementById("district-select").value;
+        const params = new URLSearchParams();
+        if (district) params.set("district", district);
+        setMessage("正在加载区域数据...");
+        const resp = await fetch(apiUrl(`/beijing_offices?${params.toString()}`), {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            authToken = "";
+            localStorage.removeItem("authToken");
+            setAuthUI(false);
+            throw new Error("登录已失效，请重新登录");
+          }
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        return resp.json();
+      }
+
+      function fillDistricts(districts) {
+        const select = document.getElementById("district-select");
+        if (select.dataset.ready === "1") return;
+        select.innerHTML =
+          `<option value="">全部区域</option>` +
+          districts.map((district) => `<option value="${district}">${district}</option>`).join("");
+        const initialDistrict = getInitialDistrict();
+        if (initialDistrict) {
+          select.value = initialDistrict;
+        }
+        select.dataset.ready = "1";
+      }
+
+      async function loadOffices() {
+        if (!getAuthToken()) {
+          setAuthUI(false);
+          setMessage("请先登录后再查看写字楼地图。", true);
+          setMapStatus("请先登录后再加载地图数据。");
+          return;
+        }
+        try {
+          const data = await fetchData();
+          fillDistricts(data.districts || []);
+          state.allItems = (data.items || []).filter(
+            (item) => Array.isArray(getMapLngLat(item))
+          );
+          const focusName = getInitialFocusName();
+          const searchInput = document.getElementById("search-input");
+          if (focusName && !searchInput.value.trim()) {
+            searchInput.value = focusName;
+          }
+          state.selectedId = state.allItems[0] ? state.allItems[0].id : null;
+          applyClientFilter();
+          await loadHeatmapLayer();
+          if (focusName) {
+            const focused = state.filteredItems.find((item) => item.location_name === focusName);
+            if (focused) {
+              state.selectedId = focused.id;
+              selectOffice(focused.id, true);
+            }
+          } else if (state.selectedId !== null) {
+            selectOffice(state.selectedId, false);
+          }
+          setMessage(`已加载 ${state.allItems.length} 个楼宇点位。`);
+        } catch (error) {
+          console.error("loadOffices failed", error);
+          setMessage(`加载失败：${error && error.message ? error.message : String(error)}`, true);
+          setMapStatus("地图数据加载失败。");
+        }
+      }
+
+      function proxiedAmapUrl(src, assetType = "asset") {
+        try {
+          const url = new URL(src, window.location.href);
+          const hostname = (url.hostname || "").toLowerCase();
+          const isAmapScriptHost = hostname === "webapi.amap.com";
+          const isAmapTileHost =
+            hostname.endsWith(".is.autonavi.com") &&
+            /^(webrd0|wprd0|webst0)/.test(hostname);
+          if (!isAmapScriptHost && !isAmapTileHost) return src;
+          const proxyPath =
+            assetType === "script" ? "/proxy/remote-script?url=" : "/proxy/remote-asset?url=";
+          return `${API_BASE}${proxyPath}${encodeURIComponent(url.href)}`;
+        } catch (error) {
+          return src;
+        }
+      }
+
+      function patchAmapAssetProxy() {
+        if (amapProxyPatched) return;
+        amapProxyPatched = true;
+
+        const originalSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function patchedSetAttribute(name, value) {
+          if (
+            typeof value === "string" &&
+            (name === "src" || name === "href") &&
+            this &&
+            (this.tagName === "SCRIPT" || this.tagName === "IMG")
+          ) {
+            const assetType = this.tagName === "SCRIPT" ? "script" : "asset";
+            value = proxiedAmapUrl(value, assetType);
+          }
+          return originalSetAttribute.call(this, name, value);
+        };
+
+        const imageSrcDescriptor = Object.getOwnPropertyDescriptor(
+          HTMLImageElement.prototype,
+          "src"
+        );
+        if (imageSrcDescriptor && imageSrcDescriptor.set) {
+          Object.defineProperty(HTMLImageElement.prototype, "src", {
+            configurable: true,
+            enumerable: imageSrcDescriptor.enumerable,
+            get: imageSrcDescriptor.get,
+            set(value) {
+              return imageSrcDescriptor.set.call(this, proxiedAmapUrl(value, "asset"));
+            },
+          });
+        }
+      }
+
+      function loadAmap() {
+        patchAmapAssetProxy();
+        return new Promise((resolve, reject) => {
+          if (window.AMap) {
+            resolve(window.AMap);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src =
+            `${API_BASE}/proxy/remote-script?url=` +
+            encodeURIComponent(`https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`);
+          script.async = true;
+          script.onload = () => {
+            if (window.AMap) resolve(window.AMap);
+            else reject(new Error("AMap unavailable"));
+          };
+          script.onerror = () => reject(new Error("AMap SDK load failed"));
+          document.head.appendChild(script);
+        });
+      }
+
+      async function initMap() {
+        const AMap = await loadAmap();
+        state.map = new AMap.Map("map", {
+          zoom: 11,
+          center: [116.397428, 39.90923],
+          viewMode: "2D",
+          resizeEnable: true,
+        });
+        state.baseTileLayer = new AMap.TileLayer({
+          zIndex: 1,
+          opacity: 1,
+          tileSize: 256,
+          getTileUrl(x, y, z) {
+            return buildAmapTileUrl(x, y, z);
+          },
+        });
+        state.map.setLayers([state.baseTileLayer]);
+        state.map.on("moveend", redrawHeatmap);
+        state.map.on("zoomend", redrawHeatmap);
+        window.addEventListener("resize", () => {
+          if (!state.map) return;
+          state.map.resize();
+          redrawHeatmap();
+        });
+        state.map.on("complete", () => {
+          setMapStatus("高德地图已就绪，选择区域后会展示楼宇点位。");
+        });
+        state.map.on("error", (error) => {
+          console.error("amap_error", error);
+          setMapStatus("地图底图加载异常，请刷新重试。");
+        });
+        setMapStatus("高德地图已就绪，选择区域后会展示楼宇点位。");
+      }
+
+      async function fetchHeatmapData() {
+        const token = getAuthToken();
+        if (!token) {
+          throw new Error("Please log in");
+        }
+        const district = document.getElementById("district-select").value;
+        const params = new URLSearchParams();
+        if (district) params.set("district", district);
+        const resp = await fetch(apiUrl(`/beijing_flow_heatmap?${params.toString()}`), {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            authToken = "";
+            localStorage.removeItem("authToken");
+            setAuthUI(false);
+            throw new Error("Login expired, please sign in again");
+          }
+          throw new Error(`heatmap HTTP ${resp.status}`);
+        }
+        return resp.json();
+      }
+
+      async function loadHeatmapLayer() {
+        try {
+          const payload = await fetchHeatmapData();
+          state.heatmapMeta = payload || null;
+          await renderHeatmap((payload && payload.points) || []);
+          const count = Number(payload?.count) || 0;
+          if (count > 0) {
+            setMapStatus(
+              `Showing ${state.filteredItems.length} offices. Heatmap uses OSM/Overpass proxy grid: ${count} cells.`
+            );
+          } else {
+            setMapStatus(
+              `Showing ${state.filteredItems.length} offices. No OSM proxy heat cells were found for this district.`
+            );
+          }
+        } catch (error) {
+          console.error("loadHeatmapLayer failed", error);
+          state.heatmapMeta = null;
+          await renderHeatmap([]);
+          setMessage(
+            `Heatmap load failed: ${error && error.message ? error.message : String(error)}`,
+            true
+          );
+        }
+      }
+
+      async function renderMarkers(items) {
+        clearMarkers();
+        if (!state.map) return;
+        redrawHeatmap();
+
+        const bounds = new AMap.Bounds();
+        const adjustedPositions = buildOverlapAdjustedPositions(items);
+        items.forEach((item) => {
+          const lnglat = adjustedPositions.get(item.id) || getMapLngLat(item);
+          if (!lnglat) return;
+          const recommendation = calcRecommendation(item);
+          const categoryStyle = getLocationCategoryStyle(item);
+          const marker = new AMap.Marker({
+            position: lnglat,
+            title: item.location_name,
+            offset: new AMap.Pixel(-13, -36),
+            zIndex: 20,
+            content: `
+              <div style="
+                min-width:34px;
+                height:26px;
+                padding:0 7px;
+                border-radius:999px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                font-size:12px;
+                font-weight:800;
+                color:${categoryStyle.color};
+                background:${categoryStyle.background};
+                border:2px solid ${categoryStyle.border};
+                box-shadow:0 6px 14px rgba(15,23,42,0.14);
+                letter-spacing:0.04em;
+                white-space:nowrap;
+              ">${recommendation.stars}</div>
+            `,
+            label: {
+              direction: "top",
+              content: `<div style="padding:3px 7px;border-radius:999px;background:${categoryStyle.background};border:1px solid ${categoryStyle.border};font-size:11px;font-weight:700;color:${categoryStyle.color};">${item.location_name}</div>`,
+            },
+          });
+          marker.on("click", () => selectOffice(item.id, true));
+          marker.on("mouseover", () => openMarkerBubble(item, marker));
+          marker.on("mouseout", () => {
+            if (state.selectedId !== item.id && state.infoWindow) {
+              state.infoWindow.close();
+            }
+          });
+          marker.setMap(state.map);
+          state.markers.push(marker);
+          state.markerById.set(item.id, marker);
+          bounds.extend(lnglat);
+        });
+
+        if (items.length) {
+          state.map.setFitView(state.markers, false, [50, 50, 50, 50], 14);
+        }
+      }
+
+      document.querySelectorAll('[data-role="toggle-filters"]').forEach((btn) => {
+        btn.addEventListener("click", () => toggleFilters());
+      });
+      document.getElementById("open-detail-modal-btn").addEventListener("click", openDetailModal);
+      document.getElementById("close-detail-modal-btn").addEventListener("click", closeDetailModal);
+      document.getElementById("detail-modal").addEventListener("click", (event) => {
+        if (event.target.id === "detail-modal") {
+          closeDetailModal();
+        }
+      });
+      if ((localStorage.getItem("officeMapFiltersCollapsed") || "") === "1") {
+        document.body.classList.add("filters-collapsed");
+      }
+      applyFilterCollapseUI();
+      syncDetailModal(null);
+      document.getElementById("load-btn").addEventListener("click", loadOffices);
+      document.getElementById("district-select").addEventListener("change", loadOffices);
+      document.getElementById("search-input").addEventListener("input", applyClientFilter);
+      document.getElementById("heatmap-toggle").addEventListener("change", () => {
+        renderHeatmap(state.heatmapItems);
+      });
+      document.getElementById("logout-btn").addEventListener("click", logout);
+
+      (async function bootstrap() {
+        try {
+          await initMap();
+          const loggedIn = await checkAuth();
+          if (loggedIn) {
+            await loadOffices();
+          } else {
+            setMapStatus("请先登录后再加载地图数据。");
+          }
+        } catch (error) {
+          console.error("bootstrap failed", error);
+          setMessage(`初始化失败：${error && error.message ? error.message : String(error)}`, true);
+          setMapStatus("地图初始化失败。");
+        }
+      })();
+    </script>
+  </body>
+</html>
