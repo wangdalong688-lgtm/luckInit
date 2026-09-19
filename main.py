@@ -391,6 +391,211 @@ def build_baidu_static_map_url(
     return f"https://api.map.baidu.com{path}?{urllib.parse.urlencode(params, safe=':,|')}"
 
 
+def baidu_place_request(path: str, params: dict[str, str]) -> dict:
+    """
+    Call Baidu Place Web API from the backend.
+    This avoids browser-side JS SDK authorization/referrer issues and keeps
+    provider credentials off the page.
+    """
+    if not BAIDU_MAP_AK:
+        raise HTTPException(status_code=500, detail="Baidu AK not configured")
+
+    request_params = dict(params)
+    request_params["ak"] = BAIDU_MAP_AK
+    request_params["output"] = "json"
+
+    if BAIDU_MAP_SK:
+        request_params["timestamp"] = str(int(time.time()))
+        request_params["sn"] = build_baidu_sn(path, request_params)
+
+    url = f"https://api.map.baidu.com{path}"
+    try:
+        resp = request_with_network_fallback(
+            "GET",
+            url,
+            params=request_params,
+            timeout=(8, 30),
+            headers={"User-Agent": "Mozilla/5.0 LuckinitBaiduPlace/1.0"},
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        log_exception_to_terminal(
+            "baidu_place_request failed",
+            path=path,
+            query=params.get("query"),
+        )
+        raise HTTPException(status_code=502, detail="Baidu Place API unavailable")
+
+    status = int(payload.get("status") or 0)
+    if status != 0:
+        message = str(payload.get("message") or payload.get("msg") or "unknown error")
+        logger.warning(
+            "Baidu Place API rejected request path=%s status=%s message=%s",
+            path,
+            status,
+            message,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Baidu Place API error {status}: {message}",
+        )
+    return payload
+
+
+def normalize_baidu_place_result(item: dict) -> dict | None:
+    location = item.get("location") or {}
+    try:
+        lat = float(location.get("lat"))
+        lng = float(location.get("lng"))
+    except (TypeError, ValueError):
+        return None
+
+    return {
+        "id": item.get("uid") or "",
+        "name": item.get("name") or "",
+        "address": item.get("address") or "",
+        "province": item.get("province") or "",
+        "city": item.get("city") or "",
+        "area": item.get("area") or "",
+        "town": item.get("town") or "",
+        "town_code": item.get("town_code"),
+        "status": item.get("status") or "",
+        "telephone": item.get("telephone") or "",
+        "location_gcj02": {"lat": lat, "lng": lng},
+        "source": "baidu_place_v3",
+    }
+
+
+@app.get("/poi/baidu/region")
+def baidu_poi_region(
+    query: str = Query(..., min_length=1, max_length=80),
+    region: str = Query(..., min_length=1, max_length=80),
+    pages: int = Query(3, ge=1, le=8),
+    _user=Depends(get_current_user),
+):
+    results: list[dict] = []
+    seen: set[str] = set()
+    total = None
+
+    for page_num in range(pages):
+        payload = baidu_place_request(
+            "/place/v3/region",
+            {
+                "query": query,
+                "region": region,
+                "region_limit": "true",
+                "scope": "2",
+                "address_result": "false",
+                "extensions_adcode": "true",
+                "ret_coordtype": "gcj02ll",
+                "page_num": str(page_num),
+                "page_size": "20",
+            },
+        )
+        if total is None:
+            try:
+                total = int(payload.get("total"))
+            except (TypeError, ValueError):
+                total = None
+
+        page_items = payload.get("results") or []
+        for raw in page_items:
+            item = normalize_baidu_place_result(raw)
+            if not item:
+                continue
+            key = item["id"] or (
+                f'{item["name"]}|'
+                f'{item["location_gcj02"]["lng"]:.6f}|'
+                f'{item["location_gcj02"]["lat"]:.6f}'
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(item)
+
+        if len(page_items) < 20:
+            break
+        if total is not None and len(results) >= total:
+            break
+
+    return {
+        "ok": True,
+        "provider": "baidu_place_v3",
+        "mode": "region",
+        "query": query,
+        "region": region,
+        "total": total,
+        "count": len(results),
+        "results": results,
+    }
+
+
+@app.get("/poi/baidu/nearby")
+def baidu_poi_nearby(
+    query: str = Query(..., min_length=1, max_length=80),
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    radius: int = Query(1000, ge=100, le=50000),
+    pages: int = Query(2, ge=1, le=5),
+    _user=Depends(get_current_user),
+):
+    results: list[dict] = []
+    seen: set[str] = set()
+    total = None
+
+    for page_num in range(pages):
+        payload = baidu_place_request(
+            "/place/v3/around",
+            {
+                "query": query,
+                "location": f"{lat:.8f},{lng:.8f}",
+                "radius": str(radius),
+                "radius_limit": "true",
+                "scope": "2",
+                "coord_type": "2",
+                "ret_coordtype": "gcj02ll",
+                "extensions_adcode": "true",
+                "page_num": str(page_num),
+                "page_size": "20",
+            },
+        )
+        if total is None:
+            try:
+                total = int(payload.get("total"))
+            except (TypeError, ValueError):
+                total = None
+
+        page_items = payload.get("results") or []
+        for raw in page_items:
+            item = normalize_baidu_place_result(raw)
+            if not item:
+                continue
+            key = item["id"] or (
+                f'{item["name"]}|'
+                f'{item["location_gcj02"]["lng"]:.6f}|'
+                f'{item["location_gcj02"]["lat"]:.6f}'
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(item)
+
+        if len(page_items) < 20:
+            break
+        if total is not None and len(results) >= total:
+            break
+
+    return {
+        "ok": True,
+        "provider": "baidu_place_v3",
+        "mode": "nearby",
+        "query": query,
+        "radius": radius,
+        "total": total,
+        "count": len(results),
+        "results": results,
+    }
 
 
 # ---------------- Overpass 调用 ----------------
