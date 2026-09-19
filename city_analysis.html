@@ -1682,25 +1682,21 @@
           ["大学", "大学"],
         ];
 
-        const [anchorResults, attractorResults, luckinStores, brandPois] =
-          await Promise.all([
-            runInBatches(
-              anchorDefs.map(
-                ([keyword, category]) =>
-                  () => baiduSearchKeyword(city, keyword, category)
-              ),
-              4
-            ),
-            runInBatches(
-              attractorDefs.map(
-                ([keyword, category]) =>
-                  () => baiduSearchKeyword(city, keyword, category)
-              ),
-              4
-            ),
-            fetchBaiduLuckinStores(city),
-            fetchBaiduBrandSignals(city),
-          ]);
+        const anchorResults = await runInBatches(
+          anchorDefs.map(
+            ([keyword, category]) =>
+              () => baiduSearchKeyword(city, keyword, category, 3)
+          ),
+          2
+        );
+        await sleep(250);
+        const attractorResults = await runInBatches(
+          attractorDefs.map(
+            ([keyword, category]) =>
+              () => baiduSearchKeyword(city, keyword, category, 3)
+          ),
+          2
+        );
 
         let anchors = dedupePlaces(anchorResults.flat());
         let attractors = dedupePlaces(attractorResults.flat());
@@ -1776,10 +1772,33 @@
           (group) => group.spot?.anchor_category === "乡镇"
         ).length;
 
+        let luckinStores = [];
+        let brandPois = [];
+        if (spread.length) {
+          const enrichment = await Promise.allSettled([
+            fetchBaiduLuckinStores(city),
+            fetchBaiduBrandSignals(city),
+          ]);
+          if (enrichment[0].status === "fulfilled") {
+            luckinStores = enrichment[0].value || [];
+          }
+          if (enrichment[1].status === "fulfilled") {
+            brandPois = enrichment[1].value || [];
+          }
+        }
+
         let payload = applyLuckinMetrics(
           {
             city,
             source: "baidu_fallback",
+            source_diagnostics: {
+              baidu: {
+                anchor_count: anchors.length,
+                attractor_count: attractors.length,
+                group_count: groups.length,
+                candidate_count: spread.length,
+              },
+            },
             scan_meta: {
               township_anchor_count: townshipAnchors.length,
               township_candidate_count: townshipCandidateCount,
@@ -1857,21 +1876,20 @@
           ["大学", "大学"],
         ];
 
-        const [anchorResults, attractorResults, luckinStores, brandPois] =
-          await Promise.all([
-            Promise.all(
-              anchorDefs.map(([keyword, category, pages]) =>
-                amapSearchKeyword(city, keyword, category, pages)
-              )
-            ),
-            Promise.all(
-              attractorDefs.map(([keyword, category]) =>
-                amapSearchKeyword(city, keyword, category, 2)
-              )
-            ),
-            fetchAmapLuckinStores(city),
-            fetchAmapBrandSignals(city),
-          ]);
+        const anchorTasks = anchorDefs.map(
+          ([keyword, category, pages]) =>
+            () => amapSearchKeyword(city, keyword, category, pages)
+        );
+        const attractorTasks = attractorDefs.map(
+          ([keyword, category]) =>
+            () => amapSearchKeyword(city, keyword, category, 2)
+        );
+
+        // Candidate generation is the critical path. Keep concurrency low so
+        // provider throttling on one auxiliary query cannot wipe the whole city.
+        const anchorResults = await runInBatches(anchorTasks, 3);
+        await sleep(250);
+        const attractorResults = await runInBatches(attractorTasks, 3);
 
         let anchors = dedupePlaces(anchorResults.flat());
         let attractors = dedupePlaces(attractorResults.flat());
@@ -1941,10 +1959,33 @@
           (group) => group.spot?.anchor_category === "乡镇"
         ).length;
 
+        let luckinStores = [];
+        let brandPois = [];
+        if (spread.length) {
+          const enrichment = await Promise.allSettled([
+            fetchAmapLuckinStores(city),
+            fetchAmapBrandSignals(city),
+          ]);
+          if (enrichment[0].status === "fulfilled") {
+            luckinStores = enrichment[0].value || [];
+          }
+          if (enrichment[1].status === "fulfilled") {
+            brandPois = enrichment[1].value || [];
+          }
+        }
+
         let payload = applyLuckinMetrics(
           {
             city,
             source: "amap_fallback",
+            source_diagnostics: {
+              amap: {
+                anchor_count: anchors.length,
+                attractor_count: attractors.length,
+                group_count: groups.length,
+                candidate_count: spread.length,
+              },
+            },
             scan_meta: {
               township_anchor_count: townshipAnchors.length,
               township_candidate_count: townshipCandidateCount,
@@ -2634,15 +2675,28 @@
           }
 
           if (!((data && data.hotspots) || []).length) {
+            const amapDiagnostics = data?.source_diagnostics?.amap || null;
             setPageMessage(
               "高德 POI 未生成候选点，正在自动切换百度 POI...",
               false
             );
             try {
               data = await buildBaiduFallbackData(city);
+              if (amapDiagnostics) {
+                data.source_diagnostics = {
+                  ...(data.source_diagnostics || {}),
+                  amap: amapDiagnostics,
+                };
+              }
             } catch (error) {
               console.warn("baidu_fallback_failed", error);
-              data = { city, hotspots: [] };
+              data = {
+                city,
+                hotspots: [],
+                source_diagnostics: amapDiagnostics
+                  ? { amap: amapDiagnostics }
+                  : {},
+              };
             }
             usedBaiduFallback = true;
           }
@@ -2656,8 +2710,17 @@
           }
 
           if (!((data && data.hotspots) || []).length) {
-            setPageMessage("Overpass、高德和百度均未生成有效候选热区。");
-            setMapStatus("暂无可用候选热区。请检查地图服务授权或网络连接。");
+            const amapDiag = data?.source_diagnostics?.amap || {};
+            const baiduDiag = data?.source_diagnostics?.baidu || {};
+            const diagText =
+              `高德：锚点 ${amapDiag.anchor_count ?? "?"} / 业态 ${amapDiag.attractor_count ?? "?"} / 候选 ${amapDiag.candidate_count ?? "?"}；` +
+              `百度：锚点 ${baiduDiag.anchor_count ?? "?"} / 业态 ${baiduDiag.attractor_count ?? "?"} / 候选 ${baiduDiag.candidate_count ?? "?"}。`;
+            setPageMessage(
+              `未生成有效候选热区。数据源诊断：${diagText}`
+            );
+            setMapStatus(
+              `暂无候选热区。请根据上方数据源诊断判断是检索为空还是地图服务失败。`
+            );
             return;
           }
 
