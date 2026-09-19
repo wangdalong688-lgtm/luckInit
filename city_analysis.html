@@ -1602,6 +1602,61 @@
         return data;
       }
 
+      function selectCandidateSpread(
+        groups,
+        limit = 50,
+        townshipQuota = 20
+      ) {
+        const sorted = [...(groups || [])].sort(
+          (a, b) => (b.spot?.hot_score || 0) - (a.spot?.hot_score || 0)
+        );
+        const township = sorted.filter(
+          (group) => group.spot?.anchor_category === "乡镇"
+        );
+        const nonTownship = sorted.filter(
+          (group) => group.spot?.anchor_category !== "乡镇"
+        );
+        const selected = [];
+
+        const canAdd = (group, minDistanceM) => {
+          const loc = getAmapLocation(group.spot);
+          if (!loc) return false;
+          return !selected.some((chosen) => {
+            const chosenLoc = getAmapLocation(chosen.spot);
+            return (
+              chosenLoc &&
+              haversineDistanceM(loc, chosenLoc) < minDistanceM
+            );
+          });
+        };
+
+        const take = (pool, maxTownshipCount, minDistanceM) => {
+          for (const group of pool) {
+            if (selected.length >= limit) break;
+            if (selected.includes(group)) continue;
+            const townshipSelected = selected.filter(
+              (item) => item.spot?.anchor_category === "乡镇"
+            ).length;
+            if (
+              maxTownshipCount != null &&
+              group.spot?.anchor_category === "乡镇" &&
+              townshipSelected >= maxTownshipCount
+            ) {
+              continue;
+            }
+            if (!canAdd(group, minDistanceM)) continue;
+            selected.push(group);
+          }
+        };
+
+        // Keep township coverage before the hard 1km Luckin validation.
+        take(township, Math.min(townshipQuota, township.length), 350);
+        take(nonTownship, null, 450);
+        take(sorted, null, 350);
+
+        return selected.slice(0, limit);
+      }
+
       async function buildBaiduFallbackData(city) {
         setMapStatus("高德 POI 未生成候选点，正在切换百度 POI 数据分析...");
 
@@ -1716,24 +1771,10 @@
           });
         });
 
-        groups.sort(
-          (a, b) => (b.spot.hot_score || 0) - (a.spot.hot_score || 0)
-        );
-
-        const spread = [];
-        for (const group of groups) {
-          const loc = getAmapLocation(group.spot);
-          if (
-            spread.some(
-              (chosen) =>
-                haversineDistanceM(loc, getAmapLocation(chosen.spot)) < 450
-            )
-          ) {
-            continue;
-          }
-          spread.push(group);
-          if (spread.length >= 30) break;
-        }
+        const spread = selectCandidateSpread(groups, 50, 20);
+        const townshipCandidateCount = spread.filter(
+          (group) => group.spot?.anchor_category === "乡镇"
+        ).length;
 
         let payload = applyLuckinMetrics(
           {
@@ -1741,6 +1782,8 @@
             source: "baidu_fallback",
             scan_meta: {
               township_anchor_count: townshipAnchors.length,
+              township_candidate_count: townshipCandidateCount,
+              candidate_pool_count: spread.length,
               scan_scope: "prefecture_city_including_townships",
             },
             hotspots: spread,
@@ -1893,22 +1936,10 @@
           });
         });
 
-        groups.sort((a, b) => (b.spot.hot_score || 0) - (a.spot.hot_score || 0));
-
-        const spread = [];
-        for (const group of groups) {
-          const loc = getAmapLocation(group.spot);
-          if (
-            spread.some(
-              (chosen) =>
-                haversineDistanceM(loc, getAmapLocation(chosen.spot)) < 450
-            )
-          ) {
-            continue;
-          }
-          spread.push(group);
-          if (spread.length >= 30) break;
-        }
+        const spread = selectCandidateSpread(groups, 50, 20);
+        const townshipCandidateCount = spread.filter(
+          (group) => group.spot?.anchor_category === "乡镇"
+        ).length;
 
         let payload = applyLuckinMetrics(
           {
@@ -1916,6 +1947,8 @@
             source: "amap_fallback",
             scan_meta: {
               township_anchor_count: townshipAnchors.length,
+              township_candidate_count: townshipCandidateCount,
+              candidate_pool_count: spread.length,
               scan_scope: "prefecture_city_including_townships",
             },
             hotspots: spread,
@@ -2679,6 +2712,12 @@
             return;
           }
           const townshipCount = Number(data.scan_meta?.township_anchor_count || 0);
+          const townshipCandidateCount = Number(
+            data.scan_meta?.township_candidate_count || 0
+          );
+          const candidatePoolCount = Number(
+            data.scan_meta?.candidate_pool_count || (data.hotspots || []).length
+          );
           const baiduCalibrated = data.source_calibration?.baidu === true;
           const dualConfirmed = Number(
             data.source_calibration?.dual_source_luckin_count || 0
@@ -2687,10 +2726,10 @@
             "分析完成：品牌信号已纳入排序，并显示已有瑞幸门店、1000米范围和最近瑞幸直线距离。";
           if (usedBaiduFallback) {
             successText =
-              `分析完成：高德/Overpass未生成候选点，已使用百度 POI；乡镇锚点扫描 ${townshipCount} 个。`;
+              `分析完成：高德/Overpass未生成候选点，已使用百度 POI；候选池 ${candidatePoolCount} 个，其中乡镇候选 ${townshipCandidateCount} 个（发现乡镇锚点 ${townshipCount} 个）。`;
           } else if (usedAmapFallback) {
             successText =
-              `分析完成：已使用高德 POI；乡镇锚点扫描 ${townshipCount} 个。`;
+              `分析完成：已使用高德 POI；候选池 ${candidatePoolCount} 个，其中乡镇候选 ${townshipCandidateCount} 个（发现乡镇锚点 ${townshipCount} 个）。`;
           }
           if (baiduCalibrated) {
             successText += ` 百度已参与校准，双源确认瑞幸 ${dualConfirmed} 家。`;
