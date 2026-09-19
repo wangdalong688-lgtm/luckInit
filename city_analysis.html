@@ -451,6 +451,10 @@
         return `${API_BASE}${path}`;
       }
 
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
       function applyFilterCollapseUI() {
         const collapsed = document.body.classList.contains("filters-collapsed");
         document.querySelectorAll('[data-role="toggle-filters"]').forEach((btn) => {
@@ -1994,20 +1998,54 @@
 
       async function fetchAnalyzeCityData(city, refresh = false) {
         const suffix = refresh ? "&refresh=true" : "";
-        const resp = await fetch(
-          apiUrl(`/analyze_city?city=${encodeURIComponent(city)}${suffix}`),
-          {
-            headers: { Authorization: `Bearer ${authToken}` },
-          }
+        const url = apiUrl(
+          `/analyze_city?city=${encodeURIComponent(city)}${suffix}`
         );
 
-        if (!resp.ok) {
-          const text = await resp.text();
-          return { ok: false, status: resp.status, text };
+        let lastError = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 90000);
+            const resp = await fetch(url, {
+              headers: { Authorization: `Bearer ${authToken}` },
+              signal: controller.signal,
+              cache: "no-store",
+            });
+            clearTimeout(timer);
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              return { ok: false, status: resp.status, text };
+            }
+
+            const data = await resp.json();
+            return { ok: true, data };
+          } catch (error) {
+            lastError = error;
+            console.warn(
+              "analyze_city_fetch_attempt_failed",
+              attempt,
+              error
+            );
+            if (attempt < 3) {
+              setPageMessage(
+                `本地分析服务连接不稳定，正在第 ${attempt + 1} 次重试...`,
+                false
+              );
+              await sleep(attempt === 1 ? 800 : 1600);
+            }
+          }
         }
 
-        const data = await resp.json();
-        return { ok: true, data };
+        return {
+          ok: false,
+          status: 0,
+          text:
+            lastError && lastError.message
+              ? lastError.message
+              : "Local analysis service unavailable",
+        };
       }
 
       async function loadData() {
@@ -2023,7 +2061,18 @@
 
         try {
           setPageMessage("", false);
-          setMapStatus("正在分析城市并加载高德地图...");
+          const cityView = CITY_VIEW[city] || CITY_VIEW.Huizhou;
+
+          // Show the selected city immediately. If any data source fails later,
+          // the user should not be left looking at Beijing by mistake.
+          try {
+            await ensureMapReady();
+            map.setZoomAndCenter(cityView.zoom, cityView.center);
+          } catch (mapError) {
+            console.warn("initial_city_map_position_failed", mapError);
+          }
+
+          setMapStatus("正在分析城市并加载地图数据...");
           let result = await fetchAnalyzeCityData(city, false);
 
           let data = null;
@@ -2037,7 +2086,9 @@
               return;
             }
             setPageMessage(
-              "Overpass 不可用，正在自动切换高德 POI；如无结果将继续切换百度 POI...",
+              result.status === 0
+                ? "本地分析接口暂时无响应，正在绕过后端并直接尝试高德/百度 POI..."
+                : "Overpass 不可用，正在自动切换高德 POI；如无结果将继续切换百度 POI...",
               false
             );
             try {
@@ -2094,7 +2145,6 @@
           activeHotspotIndex = 0;
 
           await ensureMapReady();
-          const cityView = CITY_VIEW[city] || CITY_VIEW.Huizhou;
           const center = cityView.center;
 
           const hotspots = data.hotspots || [];
