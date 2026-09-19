@@ -183,6 +183,11 @@
         border-color: #fdba74;
         background: #fff7ed;
       }
+      .tag-review {
+        color: #92400e;
+        border-color: #fcd34d;
+        background: #fffbeb;
+      }
       .row {
         display: flex;
         align-items: center;
@@ -680,6 +685,21 @@
         };
       }
 
+      function gcj02ToBd09Point(lat, lon) {
+        const x = lon;
+        const y = lat;
+        const z =
+          Math.sqrt(x * x + y * y) +
+          0.00002 * Math.sin((y * Math.PI * 3000.0) / 180.0);
+        const theta =
+          Math.atan2(y, x) +
+          0.000003 * Math.cos((x * Math.PI * 3000.0) / 180.0);
+        return {
+          lng: z * Math.cos(theta) + 0.0065,
+          lat: z * Math.sin(theta) + 0.006,
+        };
+      }
+
       async function loadBaiduSdk() {
         if (
           window.BMap &&
@@ -715,34 +735,53 @@
         return baiduReadyPromise;
       }
 
-      async function baiduSearchKeyword(city, keyword, category) {
+      async function baiduSearchKeyword(
+        city,
+        keyword,
+        category,
+        maxPages = 4
+      ) {
         await loadBaiduSdk();
         const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
 
         return await new Promise((resolve) => {
           let finished = false;
-          const finish = (items) => {
+          let timeoutId = null;
+          let nextPageIndex = 1;
+          let pageLimit = 1;
+          const all = [];
+
+          const finish = () => {
             if (finished) return;
             finished = true;
-            resolve(dedupePlaces(items || []));
+            if (timeoutId) clearTimeout(timeoutId);
+            resolve(dedupePlaces(all));
           };
 
-          const timeoutId = setTimeout(() => finish([]), 12000);
+          const armTimeout = () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+              console.warn("baidu_search_timeout", city, keyword);
+              finish();
+            }, 15000);
+          };
+
           try {
             const local = new window.BMap.LocalSearch(cityName, {
               pageCapacity: 50,
               onSearchComplete(results) {
-                clearTimeout(timeoutId);
+                if (finished) return;
+                armTimeout();
+
                 if (
                   !results ||
                   typeof results.getCurrentNumPois !== "function" ||
                   typeof results.getPoi !== "function"
                 ) {
-                  finish([]);
+                  finish();
                   return;
                 }
 
-                const items = [];
                 const count = Number(results.getCurrentNumPois() || 0);
                 for (let i = 0; i < count; i += 1) {
                   const poi = results.getPoi(i);
@@ -753,7 +792,7 @@
                   };
                   if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) continue;
                   const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
-                  items.push({
+                  all.push({
                     id: poi.uid || "",
                     name: poi.title || keyword,
                     address: poi.address || "",
@@ -767,14 +806,45 @@
                     },
                   });
                 }
-                finish(items);
+
+                const reportedPages =
+                  typeof results.getNumPages === "function"
+                    ? Number(results.getNumPages() || 1)
+                    : 1;
+                pageLimit = Math.max(
+                  1,
+                  Math.min(Number(maxPages) || 1, reportedPages || 1)
+                );
+
+                if (
+                  nextPageIndex < pageLimit &&
+                  typeof local.gotoPage === "function"
+                ) {
+                  const pageToLoad = nextPageIndex;
+                  nextPageIndex += 1;
+                  try {
+                    local.gotoPage(pageToLoad);
+                    return;
+                  } catch (error) {
+                    console.warn(
+                      "baidu_goto_page_failed",
+                      city,
+                      keyword,
+                      pageToLoad,
+                      error
+                    );
+                  }
+                }
+
+                finish();
               },
             });
+
+            armTimeout();
             local.search(keyword);
           } catch (error) {
-            clearTimeout(timeoutId);
             console.warn("baidu_search_failed", city, keyword, error);
-            finish([]);
+            finish();
           }
         });
       }
@@ -982,6 +1052,195 @@
         });
       }
 
+      async function probeAmapLuckinNearby(city, center, radius = 1000) {
+        try {
+          await ensureAmapPlaceSearch();
+          const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+          return await new Promise((resolve) => {
+            let finished = false;
+            const finish = (payload) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timer);
+              resolve(payload);
+            };
+            const timer = setTimeout(
+              () => finish({ ok: false, stores: [], reason: "timeout" }),
+              12000
+            );
+
+            const service = new window.AMap.PlaceSearch({
+              city: cityName,
+              citylimit: true,
+              pageSize: 50,
+              pageIndex: 1,
+              extensions: "all",
+            });
+
+            service.searchNearBy(
+              "瑞幸咖啡",
+              [center.lng, center.lat],
+              radius,
+              (status, result) => {
+                if (status === "no_data") {
+                  finish({ ok: true, stores: [], reason: "no_data" });
+                  return;
+                }
+                if (status !== "complete" || !result || !result.poiList) {
+                  finish({
+                    ok: false,
+                    stores: [],
+                    reason: status || "invalid_result",
+                  });
+                  return;
+                }
+
+                const stores = (result.poiList.pois || [])
+                  .map((poi) => {
+                    const loc = getLngLatNumbers(poi.location);
+                    if (!loc) return null;
+                    return {
+                      id: poi.id || "",
+                      name: poi.name || "瑞幸咖啡",
+                      address:
+                        [poi.pname, poi.cityname, poi.adname, poi.address]
+                          .filter(Boolean)
+                          .join("") || "",
+                      category: "瑞幸",
+                      location: loc,
+                      location_gcj02: loc,
+                      tags: {
+                        source: "amap_nearby_validation",
+                        type: poi.type || "",
+                        tel: poi.tel || "",
+                      },
+                    };
+                  })
+                  .filter(
+                    (item) => item && isLuckinName(item.name)
+                  );
+                finish({
+                  ok: true,
+                  stores: dedupePlaces(stores),
+                  reason: "complete",
+                });
+              }
+            );
+          });
+        } catch (error) {
+          console.warn("amap_luckin_probe_failed", error);
+          return { ok: false, stores: [], reason: "exception" };
+        }
+      }
+
+      async function probeBaiduLuckinNearby(
+        city,
+        centerBd09,
+        radius = 1000
+      ) {
+        try {
+          await loadBaiduSdk();
+          const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+
+          return await new Promise((resolve) => {
+            let finished = false;
+            const finish = (payload) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timer);
+              resolve(payload);
+            };
+            const timer = setTimeout(
+              () => finish({ ok: false, stores: [], reason: "timeout" }),
+              12000
+            );
+
+            try {
+              const local = new window.BMap.LocalSearch(cityName, {
+                pageCapacity: 50,
+                onSearchComplete(results) {
+                  if (
+                    !results ||
+                    typeof results.getCurrentNumPois !== "function" ||
+                    typeof results.getPoi !== "function"
+                  ) {
+                    finish({
+                      ok: false,
+                      stores: [],
+                      reason: "invalid_result",
+                    });
+                    return;
+                  }
+
+                  const status =
+                    typeof local.getStatus === "function"
+                      ? Number(local.getStatus())
+                      : 0;
+                  const count = Number(results.getCurrentNumPois() || 0);
+                  if (status !== 0 && count === 0) {
+                    finish({
+                      ok: false,
+                      stores: [],
+                      reason: `status_${status}`,
+                    });
+                    return;
+                  }
+
+                  const stores = [];
+                  for (let i = 0; i < count; i += 1) {
+                    const poi = results.getPoi(i);
+                    if (!poi || !poi.point) continue;
+                    const bd = {
+                      lng: Number(poi.point.lng),
+                      lat: Number(poi.point.lat),
+                    };
+                    if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) {
+                      continue;
+                    }
+                    const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
+                    const item = {
+                      id: poi.uid || "",
+                      name: poi.title || "瑞幸咖啡",
+                      address: poi.address || "",
+                      category: "瑞幸",
+                      location: gcj,
+                      location_gcj02: gcj,
+                      location_bd09: bd,
+                      tags: {
+                        source: "baidu_nearby_validation",
+                        phoneNumber: poi.phoneNumber || "",
+                      },
+                    };
+                    if (isLuckinName(item.name)) stores.push(item);
+                  }
+
+                  finish({
+                    ok: true,
+                    stores: dedupePlaces(stores),
+                    reason: "complete",
+                  });
+                },
+              });
+              const center = new window.BMap.Point(
+                Number(centerBd09.lng),
+                Number(centerBd09.lat)
+              );
+              local.searchNearby("瑞幸咖啡", center, radius);
+            } catch (error) {
+              console.warn("baidu_luckin_probe_callback_failed", error);
+              finish({
+                ok: false,
+                stores: [],
+                reason: "exception",
+              });
+            }
+          });
+        } catch (error) {
+          console.warn("baidu_luckin_probe_failed", error);
+          return { ok: false, stores: [], reason: "exception" };
+        }
+      }
+
       async function fetchAmapBrandSignals(city) {
         const tasks = BRAND_DEFINITIONS.map(
           (definition) => async () => {
@@ -1096,8 +1355,8 @@
       async function fetchBaiduLuckinStores(city) {
         const results = await runInBatches(
           [
-            () => baiduSearchKeyword(city, "瑞幸咖啡", "瑞幸"),
-            () => baiduSearchKeyword(city, "luckin coffee", "瑞幸"),
+            () => baiduSearchKeyword(city, "瑞幸咖啡", "瑞幸", 12),
+            () => baiduSearchKeyword(city, "luckin coffee", "瑞幸", 8),
           ],
           2
         );
@@ -1106,47 +1365,241 @@
         );
       }
 
-      function mergeLuckinStores(amapStores, baiduStores) {
-        const merged = [];
-        (amapStores || []).forEach((store) => {
-          merged.push({
-            ...store,
-            sources: ["amap"],
-            dual_source_confirmed: false,
-          });
-        });
+      function getLuckinStoreSources(store) {
+        if (Array.isArray(store?.sources) && store.sources.length) {
+          return store.sources;
+        }
+        const source = String(store?.tags?.source || "").toLowerCase();
+        if (source.includes("baidu")) return ["baidu"];
+        if (source.includes("amap")) return ["amap"];
+        return ["other"];
+      }
 
-        (baiduStores || []).forEach((store) => {
+      function mergeLuckinStoreList(stores, thresholdM = 120) {
+        const merged = [];
+        (stores || []).forEach((store) => {
           const storeLoc = getAmapLocation(store);
           if (!storeLoc) return;
+
           let best = null;
           let bestDistance = Infinity;
           merged.forEach((candidate) => {
-            const distance = haversineDistanceM(
-              getAmapLocation(candidate),
-              storeLoc
-            );
+            const candidateLoc = getAmapLocation(candidate);
+            if (!candidateLoc) return;
+            const distance = haversineDistanceM(candidateLoc, storeLoc);
             if (distance < bestDistance) {
               bestDistance = distance;
               best = candidate;
             }
           });
 
-          if (best && bestDistance <= 180) {
-            best.sources = Array.from(new Set([...(best.sources || []), "baidu"]));
-            best.dual_source_confirmed = best.sources.length > 1;
-            best.baidu_name = store.name;
-            best.location_bd09 = store.location_bd09 || best.location_bd09;
+          if (best && bestDistance <= thresholdM) {
+            best.sources = Array.from(
+              new Set([
+                ...getLuckinStoreSources(best),
+                ...getLuckinStoreSources(store),
+              ])
+            );
+            best.dual_source_confirmed =
+              best.sources.includes("amap") &&
+              best.sources.includes("baidu");
+            if (!best.address && store.address) best.address = store.address;
+            if (!best.location_bd09 && store.location_bd09) {
+              best.location_bd09 = store.location_bd09;
+            }
           } else {
-            merged.push({
+            const copy = {
               ...store,
-              sources: ["baidu"],
-              dual_source_confirmed: false,
-            });
+              sources: getLuckinStoreSources(store),
+            };
+            copy.dual_source_confirmed =
+              copy.sources.includes("amap") &&
+              copy.sources.includes("baidu");
+            merged.push(copy);
           }
         });
+        return merged;
+      }
 
-        return dedupePlaces(merged);
+      function mergeLuckinStores(amapStores, baiduStores) {
+        const taggedAmap = (amapStores || []).map((store) => ({
+          ...store,
+          sources: Array.from(
+            new Set([...getLuckinStoreSources(store).filter((s) => s !== "other"), "amap"])
+          ),
+        }));
+        const taggedBaidu = (baiduStores || []).map((store) => ({
+          ...store,
+          sources: Array.from(
+            new Set([...getLuckinStoreSources(store).filter((s) => s !== "other"), "baidu"])
+          ),
+        }));
+        return mergeLuckinStoreList([...taggedAmap, ...taggedBaidu]);
+      }
+
+      async function validateCandidateLuckin(city, group, globalStores) {
+        const spotLoc = getAmapLocation(group.spot);
+        if (!spotLoc) {
+          group.luckin_validation_status = "unknown";
+          group.luckin_count = null;
+          group.recommendation_status = "review";
+          return [];
+        }
+
+        const centerBd09 =
+          group.spot?.location_bd09 ||
+          gcj02ToBd09Point(spotLoc.lat, spotLoc.lng);
+
+        const [amapProbe, baiduProbe] = await Promise.all([
+          probeAmapLuckinNearby(city, spotLoc, 1000),
+          probeBaiduLuckinNearby(city, centerBd09, 1000),
+        ]);
+
+        const probeStores = mergeLuckinStores(
+          amapProbe.stores || [],
+          baiduProbe.stores || []
+        );
+        const allKnownStores = mergeLuckinStoreList([
+          ...(globalStores || []),
+          ...probeStores,
+        ]);
+
+        const distances = allKnownStores
+          .map((store) => ({
+            store,
+            distance: haversineDistanceM(
+              spotLoc,
+              getAmapLocation(store)
+            ),
+          }))
+          .filter((item) => Number.isFinite(item.distance))
+          .sort((a, b) => a.distance - b.distance);
+
+        const within1000 = distances.filter(
+          (item) => item.distance <= 1000
+        );
+        const nearest = distances[0] || null;
+
+        let validationStatus = "unknown";
+        if (within1000.length > 0) {
+          validationStatus = "found";
+        } else if (amapProbe.ok && baiduProbe.ok) {
+          validationStatus = "clear";
+        }
+
+        group.luckin_radius_m = 1000;
+        group.luckin_validation_status = validationStatus;
+        group.luckin_validation_sources = {
+          amap: {
+            ok: Boolean(amapProbe.ok),
+            count: (amapProbe.stores || []).length,
+            reason: amapProbe.reason || "",
+          },
+          baidu: {
+            ok: Boolean(baiduProbe.ok),
+            count: (baiduProbe.stores || []).length,
+            reason: baiduProbe.reason || "",
+          },
+        };
+        group.luckin_count =
+          validationStatus === "unknown" ? null : within1000.length;
+        group.recommendation_status =
+          validationStatus === "found"
+            ? "blocked"
+            : validationStatus === "clear"
+            ? "eligible"
+            : "review";
+        group.eligible_for_luckin = validationStatus === "clear";
+        group.nearest_luckin_distance_m = nearest
+          ? Math.round(nearest.distance)
+          : null;
+        group.nearest_luckin = nearest
+          ? {
+              name: nearest.store.name || "瑞幸咖啡",
+              address: nearest.store.address || "",
+              distance_m: Math.round(nearest.distance),
+              distance_type: "straight_line",
+              location: getAmapLocation(nearest.store),
+              location_gcj02: getAmapLocation(nearest.store),
+              location_bd09: nearest.store.location_bd09 || null,
+              sources: getLuckinStoreSources(nearest.store),
+              dual_source_confirmed: Boolean(
+                nearest.store.dual_source_confirmed
+              ),
+            }
+          : null;
+
+        return probeStores;
+      }
+
+      async function validateAllCandidateLuckin(data, city) {
+        const hotspots = data.hotspots || [];
+        if (!hotspots.length) return data;
+
+        const discovered = [];
+        const batchSize = 3;
+        for (let i = 0; i < hotspots.length; i += batchSize) {
+          const batch = hotspots.slice(i, i + batchSize);
+          setMapStatus(
+            `正在逐点校验1000米瑞幸：${Math.min(
+              i + batch.length,
+              hotspots.length
+            )}/${hotspots.length}`
+          );
+          const results = await Promise.all(
+            batch.map(async (group) => {
+              try {
+                return await validateCandidateLuckin(
+                  city,
+                  group,
+                  data.luckin_stores || []
+                );
+              } catch (error) {
+                console.warn("candidate_luckin_validation_failed", error);
+                group.luckin_validation_status = "unknown";
+                group.luckin_count = null;
+                group.recommendation_status = "review";
+                group.eligible_for_luckin = false;
+                return [];
+              }
+            })
+          );
+          results.forEach((stores) => discovered.push(...stores));
+        }
+
+        data.luckin_stores = mergeLuckinStoreList([
+          ...(data.luckin_stores || []),
+          ...discovered,
+        ]);
+
+        const statusRank = {
+          eligible: 0,
+          review: 1,
+          blocked: 2,
+        };
+        hotspots.sort((a, b) => {
+          const statusDiff =
+            (statusRank[a.recommendation_status] ?? 1) -
+            (statusRank[b.recommendation_status] ?? 1);
+          if (statusDiff !== 0) return statusDiff;
+          return (
+            Number(b.priority_score || b.spot?.hot_score || 0) -
+            Number(a.priority_score || a.spot?.hot_score || 0)
+          );
+        });
+
+        const summary = {
+          clear: 0,
+          found: 0,
+          unknown: 0,
+        };
+        hotspots.forEach((group) => {
+          const key = group.luckin_validation_status || "unknown";
+          if (summary[key] == null) summary[key] = 0;
+          summary[key] += 1;
+        });
+        data.luckin_validation_summary = summary;
+        return data;
       }
 
       async function buildBaiduFallbackData(city) {
@@ -1739,8 +2192,16 @@
           Number.isFinite(Number(group.nearest_luckin_distance_m))
             ? `，最近瑞幸直线距离 ${Math.round(Number(group.nearest_luckin_distance_m))} 米`
             : "";
+        const validationLabel =
+          group.luckin_validation_status === "found"
+            ? "本点1km内已有瑞幸"
+            : group.luckin_validation_status === "clear"
+            ? "本点双源校验1km内无瑞幸"
+            : group.luckin_validation_status === "unknown"
+            ? "本点1km数据待复核"
+            : "本点尚未完成双源校验";
         setMapStatus(
-          `已标记热区 ${idx + 1}、1000米范围及已有瑞幸 ${luckinStores.length} 家${nearestText}。`
+          `已标记热区 ${idx + 1}、1000米范围及已有瑞幸 ${luckinStores.length} 家；${validationLabel}${nearestText}。`
         );
         redrawHeatmap();
       }
@@ -1871,7 +2332,11 @@
           const spot = group.spot || {};
           const venues = group.venues || [];
           const total = venues.length;
-          const luckinCount = Number(group.luckin_count || 0);
+          const validationStatus =
+            group.luckin_validation_status ||
+            (group.luckin_count == null ? "unknown" : "legacy");
+          const luckinCount =
+            group.luckin_count == null ? null : Number(group.luckin_count);
           const luckinRadiusM = Number(group.luckin_radius_m || 1000);
           const nearestLuckinDistanceRaw = group.nearest_luckin_distance_m;
           const nearestLuckinDistanceM =
@@ -1888,7 +2353,8 @@
           const priorityScore = Number(
             group.priority_score || spot.hot_score || total
           );
-          const goodForLuckin = luckinCount === 0 && total >= 5;
+          const goodForLuckin =
+            validationStatus === "clear" && luckinCount === 0 && total >= 5;
           const catStats = {};
           venues.forEach((item) => {
             const cat = item.category || "门店";
@@ -1943,13 +2409,34 @@
               : "未检索到";
           const nearestLuckinName =
             nearestLuckin && nearestLuckin.name ? ` · ${nearestLuckin.name}` : "";
+          const validationSources = group.luckin_validation_sources || {};
+          const amapState =
+            validationSources.amap?.ok === true
+              ? `高德✓${validationSources.amap.count || 0}`
+              : validationSources.amap
+              ? "高德失败"
+              : "高德未校验";
+          const baiduState =
+            validationSources.baidu?.ok === true
+              ? `百度✓${validationSources.baidu.count || 0}`
+              : validationSources.baidu
+              ? "百度失败"
+              : "百度未校验";
+          const countText =
+            luckinCount == null ? "待复核" : `${luckinCount} 家`;
+
           sub.innerHTML =
             `主力业态：${topCats || "暂无"} ` +
-            `<span class="small-tag">${Math.round(luckinRadiusM)}m内瑞幸 ${luckinCount} 家</span>` +
+            `<span class="small-tag">${Math.round(luckinRadiusM)}m内瑞幸 ${countText}</span>` +
             `<span class="small-tag">最近瑞幸 ${nearestLuckinText}${nearestLuckinName}</span>` +
             `<span class="small-tag">办公 ${officeCount} 处</span>` +
+            `<span class="small-tag">${amapState} / ${baiduState}</span>` +
             (goodForLuckin
-              ? '<span class="small-tag tag-good">1km内无瑞幸</span>'
+              ? '<span class="small-tag tag-good">双源校验：1km内无瑞幸</span>'
+              : validationStatus === "found"
+              ? '<span class="small-tag tag-risk">排除：1km内已有瑞幸</span>'
+              : validationStatus === "unknown"
+              ? '<span class="small-tag tag-review">数据待复核</span>'
               : luckinCount > 0
               ? '<span class="small-tag tag-risk">1km内已有瑞幸</span>'
               : "");
@@ -2141,6 +2628,12 @@
             return;
           }
 
+          setPageMessage(
+            "候选点已生成，正在用高德+百度逐点校验1000米内瑞幸...",
+            false
+          );
+          data = await validateAllCandidateLuckin(data, city);
+
           lastData = data;
           activeHotspotIndex = 0;
 
@@ -2202,6 +2695,11 @@
           if (baiduCalibrated) {
             successText += ` 百度已参与校准，双源确认瑞幸 ${dualConfirmed} 家。`;
           }
+          const validationSummary = data.luckin_validation_summary || {};
+          successText +=
+            ` 1000米逐点校验：无瑞幸 ${validationSummary.clear || 0} 个，` +
+            `已有瑞幸 ${validationSummary.found || 0} 个，` +
+            `待复核 ${validationSummary.unknown || 0} 个。`;
           setPageMessage(successText, false);
         } catch (error) {
           console.error("analyze_failed", error);
