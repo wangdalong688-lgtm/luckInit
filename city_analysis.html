@@ -361,6 +361,10 @@
       let lastData = null;
       let authToken = localStorage.getItem("authToken") || "";
       let baseTileLayer = null;
+      let providerDiagnostics = {
+        amap: { ok: null, message: "" },
+        baidu: { ok: null, message: "" },
+      };
       const PAGE_PARAMS = new URLSearchParams(window.location.search);
       const API_BASE = resolveApiBase();
       const CITY_VIEW = {
@@ -741,186 +745,138 @@
         category,
         maxPages = 4
       ) {
-        await loadBaiduSdk();
         const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+        const url =
+          apiUrl("/poi/baidu/region") +
+          `?query=${encodeURIComponent(keyword)}` +
+          `&region=${encodeURIComponent(cityName)}` +
+          `&pages=${Math.max(1, Math.min(Number(maxPages) || 1, 8))}`;
 
-        return await new Promise((resolve) => {
-          let finished = false;
-          let timeoutId = null;
-          let nextPageIndex = 1;
-          let pageLimit = 1;
-          const all = [];
-
-          const finish = () => {
-            if (finished) return;
-            finished = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            resolve(dedupePlaces(all));
-          };
-
-          const armTimeout = () => {
-            if (timeoutId) clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => {
-              console.warn("baidu_search_timeout", city, keyword);
-              finish();
-            }, 15000);
-          };
-
-          try {
-            const local = new window.BMap.LocalSearch(cityName, {
-              pageCapacity: 50,
-              onSearchComplete(results) {
-                if (finished) return;
-                armTimeout();
-
-                if (
-                  !results ||
-                  typeof results.getCurrentNumPois !== "function" ||
-                  typeof results.getPoi !== "function"
-                ) {
-                  finish();
-                  return;
-                }
-
-                const count = Number(results.getCurrentNumPois() || 0);
-                for (let i = 0; i < count; i += 1) {
-                  const poi = results.getPoi(i);
-                  if (!poi || !poi.point) continue;
-                  const bd = {
-                    lng: Number(poi.point.lng),
-                    lat: Number(poi.point.lat),
-                  };
-                  if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) continue;
-                  const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
-                  all.push({
-                    id: poi.uid || "",
-                    name: poi.title || keyword,
-                    address: poi.address || "",
-                    category,
-                    location: gcj,
-                    location_gcj02: gcj,
-                    location_bd09: bd,
-                    tags: {
-                      source: "baidu",
-                      phoneNumber: poi.phoneNumber || "",
-                    },
-                  });
-                }
-
-                const reportedPages =
-                  typeof results.getNumPages === "function"
-                    ? Number(results.getNumPages() || 1)
-                    : 1;
-                pageLimit = Math.max(
-                  1,
-                  Math.min(Number(maxPages) || 1, reportedPages || 1)
-                );
-
-                if (
-                  nextPageIndex < pageLimit &&
-                  typeof local.gotoPage === "function"
-                ) {
-                  const pageToLoad = nextPageIndex;
-                  nextPageIndex += 1;
-                  try {
-                    local.gotoPage(pageToLoad);
-                    return;
-                  } catch (error) {
-                    console.warn(
-                      "baidu_goto_page_failed",
-                      city,
-                      keyword,
-                      pageToLoad,
-                      error
-                    );
-                  }
-                }
-
-                finish();
-              },
-            });
-
-            armTimeout();
-            local.search(keyword);
-          } catch (error) {
-            console.warn("baidu_search_failed", city, keyword, error);
-            finish();
+        try {
+          const resp = await fetch(url, {
+            headers: { Authorization: `Bearer ${authToken}` },
+            cache: "no-store",
+          });
+          if (!resp.ok) {
+            const body = await resp.text();
+            providerDiagnostics.baidu = {
+              ok: false,
+              message: `HTTP ${resp.status}: ${body.slice(0, 180)}`,
+            };
+            throw new Error(providerDiagnostics.baidu.message);
           }
-        });
+
+          const payload = await resp.json();
+          providerDiagnostics.baidu = {
+            ok: true,
+            message: `backend region search ok (${payload.count || 0})`,
+          };
+          return dedupePlaces(
+            (payload.results || []).map((poi) => ({
+              id: poi.id || "",
+              name: poi.name || keyword,
+              address: poi.address || "",
+              category,
+              location: poi.location_gcj02,
+              location_gcj02: poi.location_gcj02,
+              tags: {
+                source: "baidu_place_v3",
+                telephone: poi.telephone || "",
+                province: poi.province || "",
+                city: poi.city || "",
+                area: poi.area || "",
+                town: poi.town || "",
+                poi_status: poi.status || "",
+              },
+            }))
+          );
+        } catch (error) {
+          if (providerDiagnostics.baidu.ok !== false) {
+            providerDiagnostics.baidu = {
+              ok: false,
+              message:
+                error && error.message
+                  ? error.message
+                  : "backend Baidu region search failed",
+            };
+          }
+          console.warn("baidu_backend_region_failed", city, keyword, error);
+          return [];
+        }
       }
 
       async function baiduSearchNearbyKeyword(
         city,
         keyword,
         category,
-        centerBd09,
-        radius = 3000
+        centerGcj,
+        radius = 3000,
+        maxPages = 2
       ) {
-        await loadBaiduSdk();
-        const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+        const center = getLngLatNumbers(centerGcj) || centerGcj;
+        if (!center || !Number.isFinite(Number(center.lat)) || !Number.isFinite(Number(center.lng))) {
+          return [];
+        }
 
-        return await new Promise((resolve) => {
-          let finished = false;
-          const finish = (items) => {
-            if (finished) return;
-            finished = true;
-            resolve(dedupePlaces(items || []));
-          };
-          const timeoutId = setTimeout(() => finish([]), 12000);
+        const url =
+          apiUrl("/poi/baidu/nearby") +
+          `?query=${encodeURIComponent(keyword)}` +
+          `&lat=${encodeURIComponent(Number(center.lat).toFixed(8))}` +
+          `&lng=${encodeURIComponent(Number(center.lng).toFixed(8))}` +
+          `&radius=${Math.round(radius)}` +
+          `&pages=${Math.max(1, Math.min(Number(maxPages) || 1, 5))}`;
 
-          try {
-            const local = new window.BMap.LocalSearch(cityName, {
-              pageCapacity: 50,
-              onSearchComplete(results) {
-                clearTimeout(timeoutId);
-                if (
-                  !results ||
-                  typeof results.getCurrentNumPois !== "function" ||
-                  typeof results.getPoi !== "function"
-                ) {
-                  finish([]);
-                  return;
-                }
-
-                const items = [];
-                const count = Number(results.getCurrentNumPois() || 0);
-                for (let i = 0; i < count; i += 1) {
-                  const poi = results.getPoi(i);
-                  if (!poi || !poi.point) continue;
-                  const bd = {
-                    lng: Number(poi.point.lng),
-                    lat: Number(poi.point.lat),
-                  };
-                  if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) continue;
-                  const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
-                  items.push({
-                    id: poi.uid || "",
-                    name: poi.title || keyword,
-                    address: poi.address || "",
-                    category,
-                    location: gcj,
-                    location_gcj02: gcj,
-                    location_bd09: bd,
-                    tags: {
-                      source: "baidu_nearby",
-                      phoneNumber: poi.phoneNumber || "",
-                    },
-                  });
-                }
-                finish(items);
-              },
-            });
-            const center = new window.BMap.Point(
-              Number(centerBd09.lng),
-              Number(centerBd09.lat)
-            );
-            local.searchNearby(keyword, center, radius);
-          } catch (error) {
-            clearTimeout(timeoutId);
-            console.warn("baidu_nearby_search_failed", city, keyword, error);
-            finish([]);
+        try {
+          const resp = await fetch(url, {
+            headers: { Authorization: `Bearer ${authToken}` },
+            cache: "no-store",
+          });
+          if (!resp.ok) {
+            const body = await resp.text();
+            providerDiagnostics.baidu = {
+              ok: false,
+              message: `HTTP ${resp.status}: ${body.slice(0, 180)}`,
+            };
+            throw new Error(providerDiagnostics.baidu.message);
           }
-        });
+
+          const payload = await resp.json();
+          providerDiagnostics.baidu = {
+            ok: true,
+            message: `backend nearby search ok (${payload.count || 0})`,
+          };
+          return dedupePlaces(
+            (payload.results || []).map((poi) => ({
+              id: poi.id || "",
+              name: poi.name || keyword,
+              address: poi.address || "",
+              category,
+              location: poi.location_gcj02,
+              location_gcj02: poi.location_gcj02,
+              tags: {
+                source: "baidu_place_v3_nearby",
+                telephone: poi.telephone || "",
+                province: poi.province || "",
+                city: poi.city || "",
+                area: poi.area || "",
+                town: poi.town || "",
+                poi_status: poi.status || "",
+              },
+            }))
+          );
+        } catch (error) {
+          if (providerDiagnostics.baidu.ok !== false) {
+            providerDiagnostics.baidu = {
+              ok: false,
+              message:
+                error && error.message
+                  ? error.message
+                  : "backend Baidu nearby search failed",
+            };
+          }
+          console.warn("baidu_backend_nearby_failed", city, keyword, error);
+          return [];
+        }
       }
 
       async function ensureAmapPlaceSearch() {
@@ -950,9 +906,18 @@
             });
             service.search(keyword, (status, result) => {
               if (status !== "complete" || !result || !result.poiList) {
+                providerDiagnostics.amap = {
+                  ok: false,
+                  message:
+                    String(result?.info || result?.message || status || "unknown"),
+                };
                 resolve([]);
                 return;
               }
+              providerDiagnostics.amap = {
+                ok: true,
+                message: "AMap PlaceSearch ok",
+              };
               resolve(result.poiList.pois || []);
             });
           });
@@ -1135,106 +1100,33 @@
 
       async function probeBaiduLuckinNearby(
         city,
-        centerBd09,
+        centerGcj,
         radius = 1000
       ) {
         try {
-          await loadBaiduSdk();
-          const cityName = (CITY_VIEW[city] || CITY_VIEW.Huizhou).nameZh;
+          const stores = (
+            await baiduSearchNearbyKeyword(
+              city,
+              "瑞幸咖啡",
+              "瑞幸",
+              centerGcj,
+              radius,
+              3
+            )
+          ).filter((item) => isLuckinName(item.name));
 
-          return await new Promise((resolve) => {
-            let finished = false;
-            const finish = (payload) => {
-              if (finished) return;
-              finished = true;
-              clearTimeout(timer);
-              resolve(payload);
+          if (providerDiagnostics.baidu.ok === false) {
+            return {
+              ok: false,
+              stores: [],
+              reason: providerDiagnostics.baidu.message || "backend_error",
             };
-            const timer = setTimeout(
-              () => finish({ ok: false, stores: [], reason: "timeout" }),
-              12000
-            );
-
-            try {
-              const local = new window.BMap.LocalSearch(cityName, {
-                pageCapacity: 50,
-                onSearchComplete(results) {
-                  if (
-                    !results ||
-                    typeof results.getCurrentNumPois !== "function" ||
-                    typeof results.getPoi !== "function"
-                  ) {
-                    finish({
-                      ok: false,
-                      stores: [],
-                      reason: "invalid_result",
-                    });
-                    return;
-                  }
-
-                  const status =
-                    typeof local.getStatus === "function"
-                      ? Number(local.getStatus())
-                      : 0;
-                  const count = Number(results.getCurrentNumPois() || 0);
-                  if (status !== 0 && count === 0) {
-                    finish({
-                      ok: false,
-                      stores: [],
-                      reason: `status_${status}`,
-                    });
-                    return;
-                  }
-
-                  const stores = [];
-                  for (let i = 0; i < count; i += 1) {
-                    const poi = results.getPoi(i);
-                    if (!poi || !poi.point) continue;
-                    const bd = {
-                      lng: Number(poi.point.lng),
-                      lat: Number(poi.point.lat),
-                    };
-                    if (!Number.isFinite(bd.lng) || !Number.isFinite(bd.lat)) {
-                      continue;
-                    }
-                    const gcj = bd09ToGcj02Point(bd.lat, bd.lng);
-                    const item = {
-                      id: poi.uid || "",
-                      name: poi.title || "瑞幸咖啡",
-                      address: poi.address || "",
-                      category: "瑞幸",
-                      location: gcj,
-                      location_gcj02: gcj,
-                      location_bd09: bd,
-                      tags: {
-                        source: "baidu_nearby_validation",
-                        phoneNumber: poi.phoneNumber || "",
-                      },
-                    };
-                    if (isLuckinName(item.name)) stores.push(item);
-                  }
-
-                  finish({
-                    ok: true,
-                    stores: dedupePlaces(stores),
-                    reason: "complete",
-                  });
-                },
-              });
-              const center = new window.BMap.Point(
-                Number(centerBd09.lng),
-                Number(centerBd09.lat)
-              );
-              local.searchNearby("瑞幸咖啡", center, radius);
-            } catch (error) {
-              console.warn("baidu_luckin_probe_callback_failed", error);
-              finish({
-                ok: false,
-                stores: [],
-                reason: "exception",
-              });
-            }
-          });
+          }
+          return {
+            ok: true,
+            stores,
+            reason: "complete",
+          };
         } catch (error) {
           console.warn("baidu_luckin_probe_failed", error);
           return { ok: false, stores: [], reason: "exception" };
@@ -1446,13 +1338,9 @@
           return [];
         }
 
-        const centerBd09 =
-          group.spot?.location_bd09 ||
-          gcj02ToBd09Point(spotLoc.lat, spotLoc.lng);
-
         const [amapProbe, baiduProbe] = await Promise.all([
           probeAmapLuckinNearby(city, spotLoc, 1000),
-          probeBaiduLuckinNearby(city, centerBd09, 1000),
+          probeBaiduLuckinNearby(city, spotLoc, 1000),
         ]);
 
         const probeStores = mergeLuckinStores(
@@ -1704,7 +1592,7 @@
         if (!anchors.length) anchors = attractors.slice(0, 80);
 
         const townshipAnchors = anchors
-          .filter((item) => item.category === "乡镇" && item.location_bd09)
+          .filter((item) => item.category === "乡镇")
           .slice(0, 60);
 
         if (townshipAnchors.length) {
@@ -1717,7 +1605,7 @@
                 city,
                 "餐饮",
                 "乡镇餐饮",
-                anchor.location_bd09,
+                getAmapLocation(anchor),
                 3000
               )
           );
@@ -2621,6 +2509,10 @@
         }
 
         try {
+          providerDiagnostics = {
+            amap: { ok: null, message: "" },
+            baidu: { ok: null, message: "" },
+          };
           setPageMessage("", false);
           const cityView = CITY_VIEW[city] || CITY_VIEW.Huizhou;
 
@@ -2713,8 +2605,8 @@
             const amapDiag = data?.source_diagnostics?.amap || {};
             const baiduDiag = data?.source_diagnostics?.baidu || {};
             const diagText =
-              `高德：锚点 ${amapDiag.anchor_count ?? "?"} / 业态 ${amapDiag.attractor_count ?? "?"} / 候选 ${amapDiag.candidate_count ?? "?"}；` +
-              `百度：锚点 ${baiduDiag.anchor_count ?? "?"} / 业态 ${baiduDiag.attractor_count ?? "?"} / 候选 ${baiduDiag.candidate_count ?? "?"}。`;
+              `高德：锚点 ${amapDiag.anchor_count ?? "?"} / 业态 ${amapDiag.attractor_count ?? "?"} / 候选 ${amapDiag.candidate_count ?? "?"} / 状态 ${providerDiagnostics.amap.message || "未返回状态"}；` +
+              `百度：锚点 ${baiduDiag.anchor_count ?? "?"} / 业态 ${baiduDiag.attractor_count ?? "?"} / 候选 ${baiduDiag.candidate_count ?? "?"} / 状态 ${providerDiagnostics.baidu.message || "未返回状态"}。`;
             setPageMessage(
               `未生成有效候选热区。数据源诊断：${diagText}`
             );
