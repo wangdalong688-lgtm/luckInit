@@ -472,7 +472,7 @@ def baidu_poi_region(
     query: str = Query(..., min_length=1, max_length=80),
     region: str = Query(..., min_length=1, max_length=80),
     pages: int = Query(3, ge=1, le=8),
-    _user=Depends(get_current_user),
+    _user=Depends(require_current_user),
 ):
     results: list[dict] = []
     seen: set[str] = set()
@@ -538,7 +538,7 @@ def baidu_poi_nearby(
     lng: float = Query(..., ge=-180, le=180),
     radius: int = Query(1000, ge=100, le=50000),
     pages: int = Query(2, ge=1, le=5),
-    _user=Depends(get_current_user),
+    _user=Depends(require_current_user),
 ):
     results: list[dict] = []
     seen: set[str] = set()
